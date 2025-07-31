@@ -34,7 +34,8 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
         } else if (req.getServletPath().equals(TRAJECTORY_ROUTE)) {
             String lowerbound = req.getParameter("lowerbound");
             String upperbound = req.getParameter("upperbound");
-            response.put("meta", queryClient.getResultsTrajectory(iri, lowerbound, upperbound));
+            String trip = req.getParameter("trip");
+            response.put("meta", queryClient.getResultsTrajectory(iri, lowerbound, upperbound, trip));
         }
 
         try {

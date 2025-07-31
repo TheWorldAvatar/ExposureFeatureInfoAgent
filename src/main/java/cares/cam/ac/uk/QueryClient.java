@@ -56,6 +56,8 @@ public class QueryClient {
     static final Iri HAS_TIME_SERIES = PREFIX_TIMESERIES.iri("hasTimeSeries");
     static final Iri HAS_TIME_CLASS = PREFIX_TIMESERIES.iri("hasTimeClass");
 
+    static final Iri TRIP = PREFIX_EXPOSURE.iri("Trip");
+
     public QueryClient() {
         blazegraphUrl = BlazegraphClient.getInstance().readEndpointConfig().getUrl("kb");
         ontopUrl = OntopClient.getInstance("ontop").readEndpointConfig().getUrl();
@@ -131,7 +133,7 @@ public class QueryClient {
         return metadata;
     }
 
-    JSONObject getResultsTrajectory(String iri, String lowerbound, String upperbound) {
+    JSONObject getResultsTrajectory(String iri, String lowerbound, String upperbound, String trip) {
         SelectQuery query = Queries.SELECT();
         Iri subject = Rdf.iri(iri);
         Variable derivation = query.var();
@@ -167,6 +169,7 @@ public class QueryClient {
 
         try (Connection conn = remoteRDBStoreClient.getConnection()) {
             for (int i = 0; i < queryResult.length(); i++) {
+                // loop is for different exposure calculations, e.g. area/count
                 String datasetName = queryResult.getJSONObject(i).getString(exposure.getVarName());
 
                 String calculationName;
@@ -183,7 +186,7 @@ public class QueryClient {
 
                 String exposureResult = queryResult.getJSONObject(i).getString(exposureResultVar.getVarName());
 
-                double exposureValue = getExposureResult(timeSeriesClient, exposureResult, lowerbound, upperbound,
+                double exposureValue = getExposureResult(timeSeriesClient, exposureResult, lowerbound, upperbound, trip,
                         conn);
                 String formattedValue = String.format("%.0f", exposureValue);
 
@@ -215,13 +218,38 @@ public class QueryClient {
     }
 
     double getExposureResult(TimeSeriesClient timeSeriesClient, String iri, Object lowerbound, Object upperbound,
-            Connection conn) {
-        TimeSeries timeSeries = timeSeriesClient.getTimeSeriesWithinBounds(List.of(iri), lowerbound, upperbound, conn);
-        Set<Double> resultSet = new HashSet<>(timeSeries.getValuesAsDouble(iri));
-        if (resultSet.size() > 1) {
-            throw new RuntimeException("Results related to trips to be implemented");
+            String trip, Connection conn) {
+        if (trip != null) {
+            String tripIri = getTripIri(iri);
+            TimeSeries timeSeries = timeSeriesClient.getTimeSeriesWithinBounds(List.of(iri, tripIri), lowerbound,
+                    upperbound, conn);
+
+            int tripIndex = Integer.parseInt(trip);
+
+            // find index where trip = tripIndex
+            int index = timeSeries.getValuesAsInteger(tripIri).indexOf(tripIndex);
+            return (Double) timeSeries.getValuesAsDouble(iri).get(index);
+        } else {
+            TimeSeries timeSeries = timeSeriesClient.getTimeSeriesWithinBounds(List.of(iri), lowerbound, upperbound,
+                    conn);
+            Set<Double> resultSet = new HashSet<>(timeSeries.getValuesAsDouble(iri));
+            if (resultSet.size() > 1) {
+                throw new RuntimeException("Trip based calculation result detected but trip index is not provided");
+            }
+            return resultSet.iterator().next();
         }
-        return resultSet.iterator().next();
+    }
+
+    String getTripIri(String trajectoryIri) {
+        SelectQuery query = Queries.SELECT();
+        Variable tripVar = query.var();
+        Variable timeseriesVar = query.var();
+
+        query.where(Rdf.iri(trajectoryIri).has(HAS_TIME_SERIES, timeseriesVar),
+                tripVar.has(HAS_TIME_SERIES, timeseriesVar).andIsA(TRIP)).prefix(PREFIX_TIMESERIES, PREFIX_EXPOSURE);
+
+        JSONArray queryResult = remoteStoreClient.executeQuery(query.getQueryString());
+        return queryResult.getJSONObject(0).getString(tripVar.getVarName());
     }
 
     /**
