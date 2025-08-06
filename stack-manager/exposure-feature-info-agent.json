@@ -1,0 +1,32 @@
+{
+  "ServiceSpec": {
+    "Name": "exposure-feature-info-agent",
+    "TaskTemplate": {
+      "ContainerSpec": {
+        "Image": "ghcr.io/theworldavatar/exposure-feature-info-agent:1.0.0",
+        "Configs": [
+          {
+            "ConfigName": "blazegraph"
+          },
+          {
+            "ConfigName": "postgis"
+          },
+          {
+            "ConfigName": "ontop"
+          }
+        ],
+        "Secrets": [
+          {
+            "SecretName": "postgis_password"
+          }
+        ]
+      }
+    }
+  },
+  "endpoints": {
+    "rest": {
+      "url": "http://localhost:8080/ExposureFeatureInfoAgent/",
+      "externalPath": "/exposure-feature-info-agent/"
+    }
+  }
+}
