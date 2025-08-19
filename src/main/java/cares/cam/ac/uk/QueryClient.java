@@ -2,9 +2,13 @@ package cares.cam.ac.uk;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.Logger;
 import org.eclipse.rdf4j.model.vocabulary.RDFS;
@@ -49,12 +53,13 @@ public class QueryClient {
             .prefix("timeseries", Rdf.iri("https://www.theworldavatar.com/kg/ontotimeseries/"));
 
     static final Iri IS_DERIVED_FROM = PREFIX_DERIVATION.iri("isDerivedFrom");
-    static final Iri IS_DERIVED_USING = PREFIX_DERIVATION.iri("isDerivedUsing");
+    static final Iri HAS_CALCULATION_METHOD = PREFIX_EXPOSURE.iri("hasCalculationMethod");
     static final Iri BELONGS_TO = PREFIX_DERIVATION.iri("belongsTo");
     static final Iri HAS_VALUE = PREFIX_EXPOSURE.iri("hasValue");
     static final Iri HAS_DISTANCE = PREFIX_EXPOSURE.iri("hasDistance");
     static final Iri HAS_TIME_SERIES = PREFIX_TIMESERIES.iri("hasTimeSeries");
     static final Iri HAS_TIME_CLASS = PREFIX_TIMESERIES.iri("hasTimeClass");
+    static final Iri HAS_UNIT = PREFIX_EXPOSURE.iri("hasUnit");
 
     static final Iri TRIP = PREFIX_EXPOSURE.iri("Trip");
 
@@ -82,14 +87,15 @@ public class QueryClient {
         Variable exposureValueVar = query.var();
         Variable distanceVar = query.var();
         Variable calculationType = query.var();
+        Variable unitVar = query.var();
 
         TriplePattern gp1 = derivation.has(IS_DERIVED_FROM, subject)
-                .andHas(PropertyPathBuilder.of(IS_DERIVED_FROM).then(RDFS.LABEL).build(), exposure)
-                .andHas(IS_DERIVED_USING, calculation);
-        TriplePattern gp2 = exposureResult.has(BELONGS_TO, derivation).andHas(HAS_VALUE, exposureValueVar);
+                .andHas(PropertyPathBuilder.of(IS_DERIVED_FROM).then(RDFS.LABEL).build(), exposure);
+        TriplePattern gp2 = exposureResult.has(BELONGS_TO, derivation).andHas(HAS_VALUE, exposureValueVar)
+                .andHas(HAS_CALCULATION_METHOD, calculation).andHas(HAS_UNIT, unitVar);
         TriplePattern gp3 = calculation.isA(calculationType).andHas(HAS_DISTANCE, distanceVar);
 
-        query.where(gp1, gp2, gp3).select(exposureValueVar, exposure, calculationType, distanceVar).prefix(
+        query.where(gp1, gp2, gp3).select(exposureValueVar, exposure, calculationType, distanceVar, unitVar).prefix(
                 PREFIX_DERIVATION, PREFIX_EXPOSURE);
 
         JSONArray queryResult = remoteStoreClient.executeFederatedQuery(List.of(blazegraphUrl, ontopUrl),
@@ -104,8 +110,9 @@ public class QueryClient {
             double distance = parseRdfLiteral(queryResult.getJSONObject(i).getString(distanceVar.getVarName()));
             double exposureValue = parseRdfLiteral(
                     queryResult.getJSONObject(i).getString(exposureValueVar.getVarName()));
+            String unit = queryResult.getJSONObject(i).getString(unitVar.getVarName());
 
-            String formattedValue = String.format("%.0f", exposureValue);
+            String formattedValue = String.format("%.0f %s", exposureValue, unit);
 
             String distanceKey = String.format("%.0f", distance) + " m";
 
@@ -130,7 +137,31 @@ public class QueryClient {
 
         }
 
+        for (String dataset : metadata.keySet()) {
+            JSONObject exposureJson = metadata.getJSONObject(dataset);
+            for (String calculationName : exposureJson.keySet()) {
+                JSONObject calculationJson = exposureJson.getJSONObject(calculationName);
+                // distance keys
+                Set<String> distanceKeys = calculationJson.keySet();
+                List<String> distanceSorted = distanceKeys.stream().filter(d -> !d.contentEquals("collapse"))
+                        .sorted(Comparator.comparingDouble(this::extractNumber))
+                        .collect(Collectors.toList());
+                calculationJson.put("display_order", distanceSorted);
+            }
+        }
+
         return metadata;
+    }
+
+    private double extractNumber(String s) {
+        Pattern numberPattern = Pattern.compile("(\\d+(?:\\.\\d+)?)");
+        Matcher m = numberPattern.matcher(s);
+
+        if (m.find()) {
+            return Double.parseDouble(m.group(1));
+        } else {
+            throw new RuntimeException("Parse number error");
+        }
     }
 
     JSONObject getResultsTrajectory(String iri, String lowerbound, String upperbound, String trip) {
@@ -143,16 +174,17 @@ public class QueryClient {
         Variable distanceVar = query.var();
         Variable calculationType = query.var();
         Variable calculationLabel = query.var();
+        Variable unitVar = query.var();
 
         TriplePattern gp1 = derivation.has(IS_DERIVED_FROM, subject)
-                .andHas(PropertyPathBuilder.of(IS_DERIVED_FROM).then(RDFS.LABEL).build(), exposure)
-                .andHas(IS_DERIVED_USING, calculation);
-        TriplePattern gp2 = exposureResultVar.has(BELONGS_TO, derivation);
+                .andHas(PropertyPathBuilder.of(IS_DERIVED_FROM).then(RDFS.LABEL).build(), exposure);
+        TriplePattern gp2 = exposureResultVar.has(BELONGS_TO, derivation).andHas(HAS_CALCULATION_METHOD, calculation)
+                .andHas(HAS_UNIT, unitVar);
         TriplePattern gp3 = calculation.isA(calculationType).andHas(HAS_DISTANCE, distanceVar);
         TriplePattern gp4 = calculationType.has(RDFS.LABEL, calculationLabel);
 
         query.where(gp1, gp2, gp3, gp4.optional())
-                .select(exposure, calculationType, distanceVar, exposureResultVar, calculationLabel)
+                .select(exposure, calculationType, distanceVar, exposureResultVar, calculationLabel, unitVar)
                 .prefix(PREFIX_DERIVATION, PREFIX_EXPOSURE);
 
         JSONArray queryResult = remoteStoreClient.executeFederatedQuery(List.of(blazegraphUrl, ontopUrl),
@@ -188,7 +220,8 @@ public class QueryClient {
 
                 double exposureValue = getExposureResult(timeSeriesClient, exposureResult, lowerbound, upperbound, trip,
                         conn);
-                String formattedValue = String.format("%.0f", exposureValue);
+                String exposureUnit = queryResult.getJSONObject(i).getString(unitVar.getVarName());
+                String formattedValue = String.format("%.0f %s", exposureValue, exposureUnit);
 
                 if (!metadata.has(datasetName)) {
                     JSONObject exposureJson = new JSONObject();
