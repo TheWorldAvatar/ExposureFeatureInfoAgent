@@ -142,6 +142,8 @@ public class QueryClient {
             for (String calculationName : exposureJson.keySet()) {
                 JSONObject calculationJson = exposureJson.getJSONObject(calculationName);
                 // distance keys
+                // the main purpose of these few lines is to ensure that that properties like 50
+                // m, 100 m appears in ascending order in the visualisation
                 Set<String> distanceKeys = calculationJson.keySet();
                 List<String> distanceSorted = distanceKeys.stream().filter(d -> !d.contentEquals("collapse"))
                         .sorted(Comparator.comparingDouble(this::extractNumber))
@@ -153,6 +155,9 @@ public class QueryClient {
         return metadata;
     }
 
+    /**
+     * extracts number from strings like "400 m" or "400m"
+     */
     private double extractNumber(String s) {
         Pattern numberPattern = Pattern.compile("(\\d+(?:\\.\\d+)?)");
         Matcher m = numberPattern.matcher(s);
