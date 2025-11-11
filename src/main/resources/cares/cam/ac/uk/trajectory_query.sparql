@@ -1,0 +1,19 @@
+PREFIX time: <http://www.w3.org/2006/time#>
+PREFIX timeseries: <https://www.theworldavatar.com/kg/ontotimeseries/>
+PREFIX exposure: <https://www.theworldavatar.com/kg/ontoexposure/>
+
+SELECT DISTINCT ?val ?result
+WHERE {
+    ?obsTrip timeseries:observationOf <[TRIP_IRI]> ;
+              time:hasTime/time:inXSDDateTime ?time ;
+              timeseries:hasResult/timeseries:hasValue ?trip .
+    FILTER (?trip = [TRIP_VALUE])
+
+    ?obsTraj timeseries:observationOf ?result ;
+              time:hasTime/time:inXSDDateTime ?time ;
+              timeseries:hasResult ?res .
+    ?res timeseries:hasValue ?val .
+
+    ?result a exposure:ExposureResult .
+}
+GROUP BY ?result ?val

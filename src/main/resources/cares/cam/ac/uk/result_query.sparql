@@ -1,0 +1,23 @@
+PREFIX time: <http://www.w3.org/2006/time#>
+PREFIX timeseries: <https://www.theworldavatar.com/kg/ontotimeseries/>
+PREFIX exposure: <https://www.theworldavatar.com/kg/ontoexposure/>
+PREFIX derivation: <https://www.theworldavatar.com/kg/ontoderivation/>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+SELECT ?result ?calculation_type ?distance ?unit ?exposure_dataset_name
+WHERE {
+    [VALUES_CLAUSE]
+    ?exposure_dataset a <http://www.w3.org/ns/dcat#Dataset>;
+        rdfs:label ?exposure_dataset_name.
+    
+    ?derivation derivation:isDerivedFrom <[SUBJECT]>;
+        derivation:isDerivedFrom ?exposure_dataset.
+
+    ?result a exposure:ExposureResult ;
+        derivation:belongsTo ?derivation;
+        exposure:hasCalculationMethod ?calculation ;
+        exposure:hasUnit ?unit .
+
+    ?calculation a ?calculation_type ;
+                 exposure:hasDistance ?distance .
+}
