@@ -198,6 +198,7 @@ public class QueryClient {
             }
         }
 
+        LOGGER.info("Executing time series query");
         JSONArray queryResult = federateClient.executeQuery(query1);
 
         Map<String, Double> resultToValueMap = new HashMap<>();
@@ -220,6 +221,7 @@ public class QueryClient {
             throw new RuntimeException(e);
         }
 
+        LOGGER.info("Executing query to get metadata of results");
         JSONArray queryResult2 = federateClient.executeQuery(query2);
 
         if (queryResult2.length() != resultToValueMap.keySet().size()) {
