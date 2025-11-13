@@ -4,12 +4,11 @@ PREFIX exposure: <https://www.theworldavatar.com/kg/ontoexposure/>
 
 SELECT DISTINCT ?val ?result
 WHERE {
-    <[TRIP_IRI]> timeseries:hasTimeSeries ?timeseries .
+    <[POINT_IRI]> timeseries:hasTimeSeries ?timeseries .
     ?result timeseries:hasTimeSeries ?timeseries .
-    ?obsTrip timeseries:observationOf <[TRIP_IRI]> ;
-              time:hasTime/time:inXSDDateTime ?time ;
-              timeseries:hasResult/timeseries:hasValue ?trip .
-    FILTER (?trip = [TRIP_VALUE])
+
+    ?obsTrip timeseries:observationOf <[POINT_IRI]> ;
+              time:hasTime/time:inXSDDateTime ?time .
 
     ?obsTraj timeseries:observationOf ?result ;
               time:hasTime/time:inXSDDateTime ?time ;

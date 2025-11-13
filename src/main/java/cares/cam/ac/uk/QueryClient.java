@@ -26,8 +26,6 @@ import org.eclipse.rdf4j.sparqlbuilder.rdf.Rdf;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import com.cmclinnovations.stack.clients.blazegraph.BlazegraphClient;
-import com.cmclinnovations.stack.clients.ontop.OntopClient;
 import com.cmclinnovations.stack.clients.postgis.PostGISClient;
 import com.cmclinnovations.stack.clients.rdf4j.Rdf4jClient;
 
@@ -42,7 +40,6 @@ import org.apache.logging.log4j.Logger;
 public class QueryClient {
     private static final Logger LOGGER = LogManager.getLogger(QueryClient.class);
 
-    RemoteStoreClient remoteStoreClient;
     RemoteStoreClient ontopClient;
     RemoteStoreClient federateClient;
     RemoteRDBStoreClient remoteRDBStoreClient;
@@ -68,12 +65,6 @@ public class QueryClient {
     static final Iri TRIP = PREFIX_EXPOSURE.iri("Trip");
 
     public QueryClient() {
-        blazegraphUrl = BlazegraphClient.getInstance().readEndpointConfig().getUrl("kb");
-        ontopUrl = OntopClient.getInstance("ontop").readEndpointConfig().getUrl();
-
-        remoteStoreClient = BlazegraphClient.getInstance().getRemoteStoreClient("kb");
-        ontopClient = new RemoteStoreClient(ontopUrl);
-
         String rdbUrl = PostGISClient.getInstance().readEndpointConfig().getJdbcURL("postgres");
         String user = PostGISClient.getInstance().readEndpointConfig().getUsername();
         String password = PostGISClient.getInstance().readEndpointConfig().getPassword();
@@ -175,17 +166,36 @@ public class QueryClient {
         }
     }
 
-    JSONObject getResultsTrajectory(String iri, int tripIndex) {
+    /**
+     * with trips
+     * 
+     * @param iri
+     * @param tripIndex
+     * @return
+     */
+    JSONObject getResultsTrajectory(String iri, Integer tripIndex) {
         // split into two queries due to performance issues
         // first query focuses more on time series data
         // second query gets the metadata of the results
+
         String query1;
-        try (InputStream is = QueryClient.class.getResourceAsStream("trajectory_query.sparql")) {
-            query1 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[TRIP_IRI]", getTripIri(iri)).replace(
-                    "[TRIP_VALUE]",
-                    String.valueOf(tripIndex));
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+        if (tripIndex != null) {
+            try (InputStream is = QueryClient.class.getResourceAsStream("trajectory_query.sparql")) {
+                query1 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[TRIP_IRI]", getTripIri(iri)).replace(
+                        "[TRIP_VALUE]",
+                        String.valueOf(tripIndex));
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        } else {
+            if (getTripIri(iri) != null) {
+                throw new RuntimeException("Trip instance detected, trip index must be provided in the request");
+            }
+            try (InputStream is = QueryClient.class.getResourceAsStream("query_without_trips.sparql")) {
+                query1 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[POINT_IRI]", iri);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
 
         JSONArray queryResult = federateClient.executeQuery(query1);
@@ -269,6 +279,18 @@ public class QueryClient {
         return metadata;
     }
 
+    /**
+     * without trips
+     */
+    JSONObject getResultsTrajectory(String iri) {
+        if (getTripIri(iri) != null) {
+            throw new RuntimeException("Trip instance detected, trip index must be provided in the request");
+        }
+        JSONObject metadata = new JSONObject();
+
+        return metadata;
+    }
+
     String getTripIri(String trajectoryIri) {
         SelectQuery query = Queries.SELECT();
         Variable tripVar = query.var();
@@ -277,7 +299,11 @@ public class QueryClient {
         query.where(Rdf.iri(trajectoryIri).has(HAS_TIME_SERIES, timeseriesVar),
                 tripVar.has(HAS_TIME_SERIES, timeseriesVar).andIsA(TRIP)).prefix(PREFIX_TIMESERIES, PREFIX_EXPOSURE);
 
-        JSONArray queryResult = remoteStoreClient.executeQuery(query.getQueryString());
+        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
+
+        if (queryResult.isEmpty()) {
+            return null;
+        }
         return queryResult.getJSONObject(0).getString(tripVar.getVarName());
     }
 

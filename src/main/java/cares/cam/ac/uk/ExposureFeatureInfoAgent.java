@@ -32,8 +32,16 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
         if (req.getServletPath().equals(STANDARD_ROUTE)) {
             response.put("meta", queryClient.getResults(iri));
         } else if (req.getServletPath().equals(TRAJECTORY_ROUTE)) {
-            int tripIndex = Integer.parseInt(req.getParameter("trip"));
-            response.put("meta", queryClient.getResultsTrajectory(iri, tripIndex));
+            String tripIndexString = req.getParameter("trip");
+
+            if (tripIndexString != null) {
+                // query result specific to the trip index
+                int tripIndex = Integer.parseInt(req.getParameter("trip"));
+                response.put("meta", queryClient.getResultsTrajectory(iri, tripIndex));
+            } else {
+                //
+                response.put("meta", queryClient.getResultsTrajectory(iri, null));
+            }
         }
 
         try {
