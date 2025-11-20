@@ -4,11 +4,11 @@ PREFIX exposure: <https://www.theworldavatar.com/kg/ontoexposure/>
 PREFIX derivation: <https://www.theworldavatar.com/kg/ontoderivation/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 
-SELECT ?result ?calculation_type ?distance ?unit ?exposure_dataset_name
+SELECT ?result ?calculation_type ?distance ?unit ?exposure_dataset_name ?exposure_dataset
 WHERE {
     [VALUES_CLAUSE]
-    ?exposure_dataset a <http://www.w3.org/ns/dcat#Dataset>;
-        rdfs:label ?exposure_dataset_name.
+    ?exposure_dataset a <http://www.w3.org/ns/dcat#Dataset>.
+    OPTIONAL{?exposure_dataset rdfs:label ?exposure_dataset_name.}
     
     ?derivation derivation:isDerivedFrom <[SUBJECT]>;
         derivation:isDerivedFrom ?exposure_dataset.

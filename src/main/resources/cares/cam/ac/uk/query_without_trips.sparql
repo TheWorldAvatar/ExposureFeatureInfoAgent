@@ -1,6 +1,7 @@
 PREFIX time: <http://www.w3.org/2006/time#>
 PREFIX timeseries: <https://www.theworldavatar.com/kg/ontotimeseries/>
 PREFIX exposure: <https://www.theworldavatar.com/kg/ontoexposure/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
 SELECT DISTINCT ?val ?result
 WHERE {
@@ -8,10 +9,10 @@ WHERE {
     ?result timeseries:hasTimeSeries ?timeseries .
 
     ?obsTrip timeseries:observationOf <[POINT_IRI]> ;
-              time:hasTime/time:inXSDDateTime ?time .
+              time:hasTime/time:inTimePosition/time:numericPosition "[TIME_VALUE]"^^xsd:double .
 
     ?obsTraj timeseries:observationOf ?result ;
-              time:hasTime/time:inXSDDateTime ?time ;
+              time:hasTime/time:inTimePosition/time:numericPosition "[TIME_VALUE]"^^xsd:double ;
               timeseries:hasResult ?res .
     ?res timeseries:hasValue ?val .
 

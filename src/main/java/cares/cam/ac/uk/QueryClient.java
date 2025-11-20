@@ -26,25 +26,18 @@ import org.eclipse.rdf4j.sparqlbuilder.rdf.Rdf;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import com.cmclinnovations.stack.clients.postgis.PostGISClient;
 import com.cmclinnovations.stack.clients.rdf4j.Rdf4jClient;
 
 import uk.ac.cam.cares.jps.base.derivation.ValuesPattern;
-import uk.ac.cam.cares.jps.base.query.RemoteRDBStoreClient;
 import uk.ac.cam.cares.jps.base.query.RemoteStoreClient;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 public class QueryClient {
     private static final Logger LOGGER = LogManager.getLogger(QueryClient.class);
 
-    RemoteStoreClient ontopClient;
     RemoteStoreClient federateClient;
-    RemoteRDBStoreClient remoteRDBStoreClient;
-    String blazegraphUrl;
-    String ontopUrl;
 
     static final Prefix PREFIX_DERIVATION = SparqlBuilder
             .prefix("derivation", Rdf.iri("https://www.theworldavatar.com/kg/ontoderivation/"));
@@ -65,12 +58,6 @@ public class QueryClient {
     static final Iri TRIP = PREFIX_EXPOSURE.iri("Trip");
 
     public QueryClient() {
-        String rdbUrl = PostGISClient.getInstance().readEndpointConfig().getJdbcURL("postgres");
-        String user = PostGISClient.getInstance().readEndpointConfig().getUsername();
-        String password = PostGISClient.getInstance().readEndpointConfig().getPassword();
-
-        remoteRDBStoreClient = new RemoteRDBStoreClient(rdbUrl, user, password);
-
         String stackOutgoing = Rdf4jClient.getInstance().readEndpointConfig().getOutgoingRepositoryUrl();
         federateClient = new RemoteStoreClient(stackOutgoing);
     }
@@ -162,7 +149,9 @@ public class QueryClient {
         if (m.find()) {
             return Double.parseDouble(m.group(1));
         } else {
-            throw new RuntimeException("Parse number error");
+            String errmsg = "Failed to extract number from " + s;
+            LOGGER.error(errmsg);
+            throw new RuntimeException(errmsg);
         }
     }
 
@@ -173,7 +162,7 @@ public class QueryClient {
      * @param tripIndex
      * @return
      */
-    JSONObject getResultsTrajectory(String iri, Integer tripIndex) {
+    JSONObject getResultsTrajectory(String iri, Integer tripIndex, String time) {
         // split into two queries due to performance issues
         // first query focuses more on time series data
         // second query gets the metadata of the results
@@ -182,19 +171,27 @@ public class QueryClient {
         if (tripIndex != null) {
             try (InputStream is = QueryClient.class.getResourceAsStream("trajectory_query.sparql")) {
                 query1 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[TRIP_IRI]", getTripIri(iri)).replace(
-                        "[TRIP_VALUE]",
-                        String.valueOf(tripIndex));
+                        "[TRIP_VALUE]", String.valueOf(tripIndex)).replace("[TIME_VALUE]", time);
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                String errmsg = "Failed to process trajectory_query.sparql";
+                LOGGER.error(errmsg);
+                LOGGER.error(e.getMessage());
+                throw new RuntimeException(errmsg, e);
             }
         } else {
             if (getTripIri(iri) != null) {
-                throw new RuntimeException("Trip instance detected, trip index must be provided in the request");
+                String errmsg = "Trip instance detected, trip index must be provided in the request";
+                LOGGER.error(errmsg);
+                throw new RuntimeException(errmsg);
             }
             try (InputStream is = QueryClient.class.getResourceAsStream("query_without_trips.sparql")) {
-                query1 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[POINT_IRI]", iri);
+                query1 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[POINT_IRI]", iri)
+                        .replace("[TIME_VALUE]", time);
             } catch (IOException e) {
-                throw new RuntimeException(e);
+                String errmsg = "Failed to process query_without_trips.sparql";
+                LOGGER.error(errmsg);
+                LOGGER.error(e.getMessage());
+                throw new RuntimeException(errmsg, e);
             }
         }
 
@@ -238,7 +235,13 @@ public class QueryClient {
             String calculation = queryResult2.getJSONObject(i).getString("calculation_type");
             double distance = queryResult2.getJSONObject(i).getDouble("distance");
             String unit = queryResult2.getJSONObject(i).getString("unit");
-            String datasetName = queryResult2.getJSONObject(i).getString("exposure_dataset_name");
+
+            String datasetName;
+            if (queryResult2.getJSONObject(i).has("exposure_dataset_name")) {
+                datasetName = queryResult2.getJSONObject(i).getString("exposure_dataset_name");
+            } else {
+                datasetName = queryResult2.getJSONObject(i).getString("exposure_dataset");
+            }
 
             resultToCalculationMap.put(resultIri, calculation);
             resultToDistanceMap.put(resultIri, distance);
@@ -286,7 +289,8 @@ public class QueryClient {
      */
     JSONObject getResultsTrajectory(String iri) {
         if (getTripIri(iri) != null) {
-            throw new RuntimeException("Trip instance detected, trip index must be provided in the request");
+            String errmsg = "Trip instance detected, trip index must be provided in the request";
+            throw new RuntimeException(errmsg);
         }
         JSONObject metadata = new JSONObject();
 
