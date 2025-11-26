@@ -31,7 +31,7 @@ This agent is designed to be deployed on <https://github.com/TheWorldAvatar/hd4-
 
     Parameters:
     - iri (mandatory): IRI of the trajectory (the instance that contains point time series)
-    - trip (mandatory IF trajectory contains trip information): trip index
+    - trip (optional, mandatory IF trajectory contains trip information): trip index
 
     Example request (handled by visualisation framework):
 
