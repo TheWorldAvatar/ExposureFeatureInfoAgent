@@ -1,10 +1,12 @@
 package cares.cam.ac.uk;
 
-import java.sql.Connection;
-import java.sql.SQLException;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Comparator;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -24,26 +26,18 @@ import org.eclipse.rdf4j.sparqlbuilder.rdf.Rdf;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import com.cmclinnovations.stack.clients.blazegraph.BlazegraphClient;
-import com.cmclinnovations.stack.clients.ontop.OntopClient;
-import com.cmclinnovations.stack.clients.postgis.PostGISClient;
+import com.cmclinnovations.stack.clients.rdf4j.Rdf4jClient;
 
-import uk.ac.cam.cares.jps.base.query.RemoteRDBStoreClient;
+import uk.ac.cam.cares.jps.base.derivation.ValuesPattern;
 import uk.ac.cam.cares.jps.base.query.RemoteStoreClient;
-import uk.ac.cam.cares.jps.base.timeseries.TimeSeries;
-import uk.ac.cam.cares.jps.base.timeseries.TimeSeriesClient;
-import uk.ac.cam.cares.jps.base.timeseries.TimeSeriesClientFactory;
+
+import org.apache.commons.io.IOUtils;
 import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 public class QueryClient {
     private static final Logger LOGGER = LogManager.getLogger(QueryClient.class);
 
-    RemoteStoreClient remoteStoreClient;
-    RemoteStoreClient ontopClient;
-    RemoteRDBStoreClient remoteRDBStoreClient;
-    String blazegraphUrl;
-    String ontopUrl;
+    RemoteStoreClient federateClient;
 
     static final Prefix PREFIX_DERIVATION = SparqlBuilder
             .prefix("derivation", Rdf.iri("https://www.theworldavatar.com/kg/ontoderivation/"));
@@ -64,17 +58,8 @@ public class QueryClient {
     static final Iri TRIP = PREFIX_EXPOSURE.iri("Trip");
 
     public QueryClient() {
-        blazegraphUrl = BlazegraphClient.getInstance().readEndpointConfig().getUrl("kb");
-        ontopUrl = OntopClient.getInstance("ontop").readEndpointConfig().getUrl();
-
-        remoteStoreClient = BlazegraphClient.getInstance().getRemoteStoreClient("kb");
-        ontopClient = new RemoteStoreClient(ontopUrl);
-
-        String rdbUrl = PostGISClient.getInstance().readEndpointConfig().getJdbcURL("postgres");
-        String user = PostGISClient.getInstance().readEndpointConfig().getUsername();
-        String password = PostGISClient.getInstance().readEndpointConfig().getPassword();
-
-        remoteRDBStoreClient = new RemoteRDBStoreClient(rdbUrl, user, password);
+        String stackOutgoing = Rdf4jClient.getInstance().readEndpointConfig().getOutgoingRepositoryUrl();
+        federateClient = new RemoteStoreClient(stackOutgoing);
     }
 
     JSONObject getResults(String iri) {
@@ -98,8 +83,7 @@ public class QueryClient {
         query.where(gp1, gp2, gp3).select(exposureValueVar, exposure, calculationType, distanceVar, unitVar).prefix(
                 PREFIX_DERIVATION, PREFIX_EXPOSURE);
 
-        JSONArray queryResult = remoteStoreClient.executeFederatedQuery(List.of(blazegraphUrl, ontopUrl),
-                query.getQueryString());
+        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
 
         JSONObject metadata = new JSONObject();
 
@@ -165,117 +149,152 @@ public class QueryClient {
         if (m.find()) {
             return Double.parseDouble(m.group(1));
         } else {
-            throw new RuntimeException("Parse number error");
+            String errmsg = "Failed to extract number from " + s;
+            LOGGER.error(errmsg);
+            throw new RuntimeException(errmsg);
         }
     }
 
-    JSONObject getResultsTrajectory(String iri, String lowerbound, String upperbound, String trip) {
-        SelectQuery query = Queries.SELECT();
-        Iri subject = Rdf.iri(iri);
-        Variable derivation = query.var();
-        Variable exposure = query.var();
-        Variable calculation = query.var();
-        Variable exposureResultVar = query.var();
-        Variable distanceVar = query.var();
-        Variable calculationType = query.var();
-        Variable calculationLabel = query.var();
-        Variable unitVar = query.var();
+    /**
+     * with trips
+     * 
+     * @param iri
+     * @param tripIndex
+     * @return
+     */
+    JSONObject getResultsTrajectory(String iri, Integer tripIndex, String time) {
+        // split into two queries due to performance issues
+        // first query focuses more on time series data
+        // second query gets the metadata of the results
 
-        TriplePattern gp1 = derivation.has(IS_DERIVED_FROM, subject)
-                .andHas(PropertyPathBuilder.of(IS_DERIVED_FROM).then(RDFS.LABEL).build(), exposure);
-        TriplePattern gp2 = exposureResultVar.has(BELONGS_TO, derivation).andHas(HAS_CALCULATION_METHOD, calculation)
-                .andHas(HAS_UNIT, unitVar);
-        TriplePattern gp3 = calculation.isA(calculationType).andHas(HAS_DISTANCE, distanceVar);
-        TriplePattern gp4 = calculationType.has(RDFS.LABEL, calculationLabel);
+        String query1;
+        if (tripIndex != null) {
+            try (InputStream is = QueryClient.class.getResourceAsStream("trajectory_query.sparql")) {
+                query1 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[TRIP_IRI]", getTripIri(iri)).replace(
+                        "[TRIP_VALUE]", String.valueOf(tripIndex)).replace("[TIME_VALUE]", time);
+            } catch (IOException e) {
+                String errmsg = "Failed to process trajectory_query.sparql";
+                LOGGER.error(errmsg);
+                LOGGER.error(e.getMessage());
+                throw new RuntimeException(errmsg, e);
+            }
+        } else {
+            if (getTripIri(iri) != null) {
+                String errmsg = "Trip instance detected, trip index must be provided in the request";
+                LOGGER.error(errmsg);
+                throw new RuntimeException(errmsg);
+            }
+            try (InputStream is = QueryClient.class.getResourceAsStream("query_without_trips.sparql")) {
+                query1 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[POINT_IRI]", iri)
+                        .replace("[TIME_VALUE]", time);
+            } catch (IOException e) {
+                String errmsg = "Failed to process query_without_trips.sparql";
+                LOGGER.error(errmsg);
+                LOGGER.error(e.getMessage());
+                throw new RuntimeException(errmsg, e);
+            }
+        }
 
-        query.where(gp1, gp2, gp3, gp4.optional())
-                .select(exposure, calculationType, distanceVar, exposureResultVar, calculationLabel, unitVar)
-                .prefix(PREFIX_DERIVATION, PREFIX_EXPOSURE);
+        LOGGER.info("Executing time series query");
+        JSONArray queryResult = federateClient.executeQuery(query1);
 
-        JSONArray queryResult = remoteStoreClient.executeFederatedQuery(List.of(blazegraphUrl, ontopUrl),
-                query.getQueryString());
+        Map<String, Double> resultToValueMap = new HashMap<>();
+
+        for (int i = 0; i < queryResult.length(); i++) {
+            // variable names are in trajectory_query.sparql in the resources folder
+            String resultIri = queryResult.getJSONObject(i).getString("result");
+            double exposureValue = queryResult.getJSONObject(i).getDouble("val");
+            resultToValueMap.put(resultIri, exposureValue);
+        }
+
+        ValuesPattern values = new ValuesPattern(SparqlBuilder.var("result"),
+                resultToValueMap.keySet().stream().map(r -> Rdf.iri(r)).collect(Collectors.toList()));
+
+        String query2;
+        try (InputStream is = QueryClient.class.getResourceAsStream("result_query.sparql")) {
+            query2 = IOUtils.toString(is, StandardCharsets.UTF_8).replace("[VALUES_CLAUSE]", values.getQueryString())
+                    .replace("[SUBJECT]", iri);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        LOGGER.info("Executing query to get metadata of results");
+        JSONArray queryResult2 = federateClient.executeQuery(query2);
+
+        if (queryResult2.length() != resultToValueMap.keySet().size()) {
+            throw new RuntimeException("Unexpected query result size");
+        }
+
+        Map<String, Double> resultToDistanceMap = new HashMap<>();
+        Map<String, String> resultToCalculationMap = new HashMap<>();
+        Map<String, String> resultToUnitMap = new HashMap<>();
+        Map<String, String> resultToDatasetMap = new HashMap<>();
+
+        for (int i = 0; i < queryResult2.length(); i++) {
+            String resultIri = queryResult2.getJSONObject(i).getString("result");
+            String calculation = queryResult2.getJSONObject(i).getString("calculation_type");
+            double distance = queryResult2.getJSONObject(i).getDouble("distance");
+            String unit = queryResult2.getJSONObject(i).getString("unit");
+
+            String datasetName;
+            if (queryResult2.getJSONObject(i).has("exposure_dataset_name")) {
+                datasetName = queryResult2.getJSONObject(i).getString("exposure_dataset_name");
+            } else {
+                datasetName = queryResult2.getJSONObject(i).getString("exposure_dataset");
+            }
+
+            resultToCalculationMap.put(resultIri, calculation);
+            resultToDistanceMap.put(resultIri, distance);
+            resultToUnitMap.put(resultIri, unit);
+            resultToDatasetMap.put(resultIri, datasetName);
+        }
 
         JSONObject metadata = new JSONObject();
+        resultToValueMap.keySet().forEach(r -> {
+            double exposureValue = resultToValueMap.get(r);
+            double distance = resultToDistanceMap.get(r);
+            String datasetName = resultToDatasetMap.get(r);
+            String exposureUnit = resultToUnitMap.get(r);
+            String calculationName = resultToCalculationMap.get(r);
+            calculationName = calculationName.substring(calculationName.lastIndexOf('/') + 1);
+            String distanceKey = String.format("%.0f", distance) + " m";
+            String formattedValue = String.format("%.0f %s", exposureValue, exposureUnit);
 
-        TimeSeriesClient timeSeriesClient;
-        try {
-            timeSeriesClient = TimeSeriesClientFactory.getInstance(remoteStoreClient, List.of(iri));
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
+            if (!metadata.has(datasetName)) {
+                JSONObject exposureJson = new JSONObject();
+                JSONObject calculationJson = new JSONObject();
+                calculationJson.put("collapse", true);
 
-        try (Connection conn = remoteRDBStoreClient.getConnection()) {
-            for (int i = 0; i < queryResult.length(); i++) {
-                // loop is for different exposure calculations, e.g. area/count
-                String datasetName = queryResult.getJSONObject(i).getString(exposure.getVarName());
-
-                String calculationName;
-
-                if (queryResult.getJSONObject(i).has(calculationLabel.getVarName())) {
-                    calculationName = queryResult.getJSONObject(i).getString(calculationLabel.getVarName());
+                metadata.put(datasetName, exposureJson);
+                exposureJson.put(calculationName, calculationJson);
+                calculationJson.put(distanceKey, formattedValue);
+            } else {
+                if (metadata.getJSONObject(datasetName).has(calculationName)) {
+                    metadata.getJSONObject(datasetName).getJSONObject(calculationName).put(distanceKey,
+                            formattedValue);
                 } else {
-                    calculationName = queryResult.getJSONObject(i).getString(calculationType.getVarName());
-                    calculationName = calculationName.substring(calculationName.lastIndexOf('/') + 1);
-                }
-
-                double distance = parseRdfLiteral(queryResult.getJSONObject(i).getString(distanceVar.getVarName()));
-                String distanceKey = String.format("%.0f", distance) + " m";
-
-                String exposureResult = queryResult.getJSONObject(i).getString(exposureResultVar.getVarName());
-
-                double exposureValue = getExposureResult(timeSeriesClient, exposureResult, lowerbound, upperbound, trip,
-                        conn);
-                String exposureUnit = queryResult.getJSONObject(i).getString(unitVar.getVarName());
-                String formattedValue = String.format("%.0f %s", exposureValue, exposureUnit);
-
-                if (!metadata.has(datasetName)) {
-                    JSONObject exposureJson = new JSONObject();
                     JSONObject calculationJson = new JSONObject();
                     calculationJson.put("collapse", true);
-
-                    metadata.put(datasetName, exposureJson);
-                    exposureJson.put(calculationName, calculationJson);
                     calculationJson.put(distanceKey, formattedValue);
-                } else {
-                    if (metadata.getJSONObject(datasetName).has(calculationName)) {
-                        metadata.getJSONObject(datasetName).getJSONObject(calculationName).put(distanceKey,
-                                formattedValue);
-                    } else {
-                        JSONObject calculationJson = new JSONObject();
-                        calculationJson.put("collapse", true);
-                        calculationJson.put(distanceKey, formattedValue);
-                        metadata.getJSONObject(datasetName).put(calculationName, calculationJson);
-                    }
+                    metadata.getJSONObject(datasetName).put(calculationName, calculationJson);
                 }
             }
-        } catch (SQLException e) {
-            throw new RuntimeException(e);
-        }
+        });
 
         return metadata;
     }
 
-    double getExposureResult(TimeSeriesClient timeSeriesClient, String iri, Object lowerbound, Object upperbound,
-            String trip, Connection conn) {
-        if (trip != null) {
-            String tripIri = getTripIri(iri);
-            TimeSeries timeSeries = timeSeriesClient.getTimeSeriesWithinBounds(List.of(iri, tripIri), lowerbound,
-                    upperbound, conn);
-
-            int tripIndex = Integer.parseInt(trip);
-
-            // find index where trip = tripIndex
-            int index = timeSeries.getValuesAsInteger(tripIri).indexOf(tripIndex);
-            return (Double) timeSeries.getValuesAsDouble(iri).get(index);
-        } else {
-            TimeSeries timeSeries = timeSeriesClient.getTimeSeriesWithinBounds(List.of(iri), lowerbound, upperbound,
-                    conn);
-            Set<Double> resultSet = new HashSet<>(timeSeries.getValuesAsDouble(iri));
-            if (resultSet.size() > 1) {
-                throw new RuntimeException("Trip based calculation result detected but trip index is not provided");
-            }
-            return resultSet.iterator().next();
+    /**
+     * without trips
+     */
+    JSONObject getResultsTrajectory(String iri) {
+        if (getTripIri(iri) != null) {
+            String errmsg = "Trip instance detected, trip index must be provided in the request";
+            throw new RuntimeException(errmsg);
         }
+        JSONObject metadata = new JSONObject();
+
+        return metadata;
     }
 
     String getTripIri(String trajectoryIri) {
@@ -286,7 +305,11 @@ public class QueryClient {
         query.where(Rdf.iri(trajectoryIri).has(HAS_TIME_SERIES, timeseriesVar),
                 tripVar.has(HAS_TIME_SERIES, timeseriesVar).andIsA(TRIP)).prefix(PREFIX_TIMESERIES, PREFIX_EXPOSURE);
 
-        JSONArray queryResult = remoteStoreClient.executeQuery(query.getQueryString());
+        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
+
+        if (queryResult.isEmpty()) {
+            return null;
+        }
         return queryResult.getJSONObject(0).getString(tripVar.getVarName());
     }
 
@@ -303,30 +326,5 @@ public class QueryClient {
             String value = literal.substring(start, end);
             return Double.parseDouble(value);
         }
-    }
-
-    private Object convertTimeForTimeSeries(String time) {
-        try {
-            if (time == null) {
-                return null;
-            } else {
-                return Long.parseLong(time);
-            }
-        } catch (NumberFormatException e) {
-            String errmsg = "Only epoch seconds supported for now";
-            throw new RuntimeException(errmsg, e);
-        }
-
-    }
-
-    private String getJavaTimeClass(String iri) {
-        SelectQuery query = Queries.SELECT();
-        Variable classNameVar = query.var();
-        query.where(
-                Rdf.iri(iri).has(PropertyPathBuilder.of(HAS_TIME_SERIES).then(HAS_TIME_CLASS).build(), classNameVar))
-                .prefix(PREFIX_TIMESERIES);
-
-        JSONArray queryResult = remoteStoreClient.executeQuery(query.getQueryString());
-        return queryResult.getJSONObject(0).getString(classNameVar.getVarName());
     }
 }

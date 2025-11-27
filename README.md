@@ -29,12 +29,14 @@ This agent is designed to be deployed on <https://github.com/TheWorldAvatar/hd4-
 
 2) /trajectory/feature-info-agent/get
 
-    Mandatory parameter: iri
+    Parameters:
+    - iri (mandatory): IRI of the trajectory (the instance that contains point time series)
+    - trip (optional, mandatory IF trajectory contains trip information): trip index
 
     Example request (handled by visualisation framework):
 
     ```bash
-    curl http://localhost:3838/exposure-feature-info-agent/trajectory/feature-info-agent/get?iri=http://subject
+    curl http://localhost:3838/exposure-feature-info-agent/trajectory/feature-info-agent/get?iri=http://subject&trip=1
     ```
 
     This is for trajectory based calculations where results are instantiated as time series.
