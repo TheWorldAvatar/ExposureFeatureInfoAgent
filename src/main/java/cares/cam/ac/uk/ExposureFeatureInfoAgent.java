@@ -30,7 +30,7 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
 
         JSONObject response = new JSONObject();
         if (req.getServletPath().equals(STANDARD_ROUTE)) {
-            response.put("meta", queryClient.getResults(iri));
+            response.put("meta", queryClient.getExposureResults(iri));
         } else if (req.getServletPath().equals(TRAJECTORY_ROUTE)) {
             String tripIndexString = req.getParameter("trip");
             String time = req.getParameter("time_as_number");

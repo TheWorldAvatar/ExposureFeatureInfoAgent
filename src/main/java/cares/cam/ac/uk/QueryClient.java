@@ -3,8 +3,10 @@ package cares.cam.ac.uk;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -14,12 +16,15 @@ import java.util.stream.Collectors;
 
 import org.apache.logging.log4j.Logger;
 import org.eclipse.rdf4j.model.vocabulary.RDFS;
+import org.eclipse.rdf4j.sparqlbuilder.constraint.Expressions;
 import org.eclipse.rdf4j.sparqlbuilder.constraint.propertypath.builder.PropertyPathBuilder;
 import org.eclipse.rdf4j.sparqlbuilder.core.Prefix;
 import org.eclipse.rdf4j.sparqlbuilder.core.SparqlBuilder;
 import org.eclipse.rdf4j.sparqlbuilder.core.Variable;
 import org.eclipse.rdf4j.sparqlbuilder.core.query.Queries;
 import org.eclipse.rdf4j.sparqlbuilder.core.query.SelectQuery;
+import org.eclipse.rdf4j.sparqlbuilder.graphpattern.GraphPattern;
+import org.eclipse.rdf4j.sparqlbuilder.graphpattern.GraphPatterns;
 import org.eclipse.rdf4j.sparqlbuilder.graphpattern.TriplePattern;
 import org.eclipse.rdf4j.sparqlbuilder.rdf.Iri;
 import org.eclipse.rdf4j.sparqlbuilder.rdf.Rdf;
@@ -28,6 +33,8 @@ import org.json.JSONObject;
 
 import com.cmclinnovations.stack.clients.rdf4j.Rdf4jClient;
 
+import cares.cam.ac.uk.classes.CalculationMethod;
+import cares.cam.ac.uk.classes.ExposureResult;
 import uk.ac.cam.cares.jps.base.derivation.ValuesPattern;
 import uk.ac.cam.cares.jps.base.query.RemoteStoreClient;
 
@@ -54,12 +61,212 @@ public class QueryClient {
     static final Iri HAS_TIME_SERIES = PREFIX_TIMESERIES.iri("hasTimeSeries");
     static final Iri HAS_TIME_CLASS = PREFIX_TIMESERIES.iri("hasTimeClass");
     static final Iri HAS_UNIT = PREFIX_EXPOSURE.iri("hasUnit");
+    static final Iri HAS_DATASET_FILTER = PREFIX_EXPOSURE.iri("hasDatasetFilter");
+    static final Iri HAS_FILTER_COLUMN = PREFIX_EXPOSURE.iri("hasFilterColumn");
+    static final Iri HAS_FILTER_VALUE = PREFIX_EXPOSURE.iri("hasFilterValue");
 
     static final Iri TRIP = PREFIX_EXPOSURE.iri("Trip");
 
     public QueryClient() {
         String stackOutgoing = Rdf4jClient.getInstance().readEndpointConfig().getOutgoingRepositoryUrl();
         federateClient = new RemoteStoreClient(stackOutgoing);
+    }
+
+    JSONObject getExposureResults(String iri) {
+        SelectQuery query = Queries.SELECT();
+        Iri subject = Rdf.iri(iri);
+        Variable derivation = query.var();
+        Variable exposure = query.var();
+        Variable calculation = query.var();
+        Variable exposureResult = query.var();
+        Variable exposureValueVar = query.var();
+        Variable unitVar = query.var();
+
+        GraphPattern gp1 = derivation.has(IS_DERIVED_FROM, subject).andHas(IS_DERIVED_FROM, exposure)
+                .filter(Expressions.notEquals(exposure, Rdf.iri(iri)));
+        TriplePattern gp2 = exposureResult.has(BELONGS_TO, derivation).andHas(HAS_VALUE, exposureValueVar)
+                .andHas(HAS_CALCULATION_METHOD, calculation).andHas(HAS_UNIT, unitVar);
+
+        query.where(gp1, gp2).select(exposureValueVar, exposure, calculation, unitVar).prefix(
+                PREFIX_DERIVATION, PREFIX_EXPOSURE).distinct();
+
+        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
+
+        Map<String, CalculationMethod> calculationMap = new HashMap<>();
+        Set<String> exposureSet = new HashSet<>();
+        List<ExposureResult> resultList = new ArrayList<>();
+
+        for (int i = 0; i < queryResult.length(); i++) {
+            String exposureIri = queryResult.getJSONObject(i).getString(exposure.getVarName());
+            String calculationIri = queryResult.getJSONObject(i).getString(calculation.getVarName());
+            double value = queryResult.getJSONObject(i).getDouble(exposureValueVar.getVarName());
+            String unit = queryResult.getJSONObject(i).getString(unitVar.getVarName());
+
+            calculationMap.computeIfAbsent(calculationIri, k -> new CalculationMethod(k));
+            exposureSet.add(exposureIri);
+            resultList.add(new ExposureResult(exposureIri, calculationIri, value, unit));
+        }
+        setCalculationProperties(calculationMap);
+        Map<String, String> exposureMap = getExposureName(exposureSet);
+
+        JSONObject metadata = new JSONObject();
+
+        for (ExposureResult result : resultList) {
+            String datasetName;
+            if (exposureMap.containsKey(result.getExposureIri())) {
+                datasetName = exposureMap.get(result.getExposureIri());
+            } else {
+                datasetName = result.getExposureIri();
+            }
+
+            CalculationMethod calcMethod = calculationMap.get(result.getCalculationIri());
+            if (!metadata.has(datasetName)) {
+                JSONObject datasetJson = new JSONObject();
+                metadata.put(datasetName, datasetJson);
+            }
+
+            JSONObject datasetJson = metadata.getJSONObject(datasetName);
+
+            // cycle through to check each dataset filter is initialised
+            JSONObject currentLevel = datasetJson;
+            for (String filter : calcMethod.getDatasetFilters()) {
+                if (!currentLevel.has(filter)) {
+                    JSONObject filterJson = new JSONObject();
+                    filterJson.put("collapse", true);
+                    currentLevel.put(filter, filterJson);
+                }
+
+                // sort year in ascending order
+                if (filter.contains("year")) {
+                    if (currentLevel.has("display_order")) {
+                        List<String> order = new ArrayList<>(
+                                currentLevel.getJSONArray("display_order").toList().stream()
+                                        .map(Object::toString).toList());
+
+                        if (!order.contains(filter)) {
+                            order.add(filter);
+                            List<String> yearSorted = order.stream().filter(d -> !d.contentEquals("collapse"))
+                                    .sorted(Comparator.comparingInt(
+                                            s -> Integer.parseInt(s.split("=")[1])))
+                                    .collect(Collectors.toList());
+                            currentLevel.put("display_order", yearSorted);
+                        }
+                    } else {
+                        currentLevel.put("display_order", List.of(filter));
+                    }
+                }
+
+                currentLevel = currentLevel.getJSONObject(filter);
+            }
+
+            // now actually adding values
+            currentLevel = datasetJson;
+            if (!calcMethod.getDatasetFilters().isEmpty()) {
+                for (String filter : calcMethod.getDatasetFilters()) {
+                    currentLevel = currentLevel.getJSONObject(filter);
+                }
+            }
+
+            if (!currentLevel.has(calcMethod.getName())) {
+                JSONObject newJson = new JSONObject();
+                newJson.put("collapse", true);
+                currentLevel.put(calcMethod.getName(), newJson);
+            }
+
+            currentLevel = currentLevel.getJSONObject(calcMethod.getName());
+
+            String formattedDistance = calcMethod.getFormattedDistance();
+            if (formattedDistance != null) {
+                currentLevel.put(formattedDistance, result.getFormattedValue());
+
+                // the purpose of this is to display distances in ascending order
+                if (currentLevel.has("display_order")) {
+                    List<String> order = new ArrayList<>(currentLevel.getJSONArray("display_order").toList().stream()
+                            .map(Object::toString).toList());
+
+                    if (!order.contains(formattedDistance)) {
+                        order.add(formattedDistance);
+                        List<String> distanceSorted = order.stream().filter(d -> !d.contentEquals("collapse"))
+                                .sorted(Comparator.comparingDouble(this::extractNumber))
+                                .collect(Collectors.toList());
+                        currentLevel.put("display_order", distanceSorted);
+                    }
+                } else {
+                    List<String> order = List.of(formattedDistance);
+                    currentLevel.put("display_order", order);
+                }
+            } else {
+                currentLevel.put("-", result.getFormattedValue());
+            }
+        }
+
+        return metadata;
+    }
+
+    void setCalculationProperties(Map<String, CalculationMethod> calculationMap) {
+        SelectQuery query = Queries.SELECT();
+
+        Variable calculation = query.var();
+        Variable calculationType = query.var();
+        Variable distanceVar = query.var();
+        Variable datasetFilter = query.var();
+        Variable filterColumnVar = query.var();
+        Variable filterValueVar = query.var();
+
+        ValuesPattern vPattern = new ValuesPattern(calculation,
+                calculationMap.keySet().stream().map(k -> Rdf.iri(k)).collect(Collectors.toList()));
+
+        GraphPattern gp1 = calculation.isA(calculationType);
+        GraphPattern gp2 = calculation.has(HAS_DISTANCE, distanceVar).optional();
+
+        GraphPattern gp3 = GraphPatterns.and(calculation.has(HAS_DATASET_FILTER, datasetFilter),
+                datasetFilter.has(HAS_FILTER_COLUMN, filterColumnVar).andHas(HAS_FILTER_VALUE, filterValueVar))
+                .optional();
+
+        query.where(gp1, gp2, gp3, vPattern).prefix(PREFIX_EXPOSURE).distinct();
+
+        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
+
+        for (int i = 0; i < queryResult.length(); i++) {
+            String calculationIri = queryResult.getJSONObject(i).getString(calculation.getVarName());
+            String calcType = queryResult.getJSONObject(i).getString(calculationType.getVarName());
+            calcType = calcType.substring(calcType.lastIndexOf('/') + 1);
+            calculationMap.get(calculationIri).setName(calcType);
+
+            if (queryResult.getJSONObject(i).has(distanceVar.getVarName())) {
+                double distance = queryResult.getJSONObject(i).getDouble(distanceVar.getVarName());
+                calculationMap.get(calculationIri).setDistance(distance);
+            }
+
+            if (queryResult.getJSONObject(i).has(datasetFilter.getVarName())) {
+                String filterColumn = queryResult.getJSONObject(i).getString(filterColumnVar.getVarName());
+                String filterValue = queryResult.getJSONObject(i).getString(filterValueVar.getVarName());
+
+                calculationMap.get(calculationIri).setDatasetFilter(filterColumn, filterValue);
+            }
+        }
+    }
+
+    Map<String, String> getExposureName(Set<String> exposureSet) {
+        SelectQuery query = Queries.SELECT();
+        Variable exposureVar = query.var();
+        Variable labelVar = query.var();
+
+        ValuesPattern valuesPattern = new ValuesPattern(exposureVar,
+                exposureSet.stream().map(k -> Rdf.iri(k)).collect(Collectors.toList()));
+
+        query.where(exposureVar.has(RDFS.LABEL, labelVar), valuesPattern);
+
+        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
+
+        Map<String, String> exposureMap = new HashMap<>();
+        for (int i = 0; i < queryResult.length(); i++) {
+            String exposureIri = queryResult.getJSONObject(i).getString(exposureVar.getVarName());
+            String label = queryResult.getJSONObject(i).getString(labelVar.getVarName());
+            exposureMap.put(exposureIri, label);
+        }
+
+        return exposureMap;
     }
 
     JSONObject getResults(String iri) {
