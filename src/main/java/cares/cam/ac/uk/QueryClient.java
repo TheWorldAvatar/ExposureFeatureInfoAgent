@@ -17,7 +17,6 @@ import java.util.stream.Collectors;
 import org.apache.logging.log4j.Logger;
 import org.eclipse.rdf4j.model.vocabulary.RDFS;
 import org.eclipse.rdf4j.sparqlbuilder.constraint.Expressions;
-import org.eclipse.rdf4j.sparqlbuilder.constraint.propertypath.builder.PropertyPathBuilder;
 import org.eclipse.rdf4j.sparqlbuilder.core.Prefix;
 import org.eclipse.rdf4j.sparqlbuilder.core.SparqlBuilder;
 import org.eclipse.rdf4j.sparqlbuilder.core.Variable;
@@ -31,6 +30,8 @@ import org.eclipse.rdf4j.sparqlbuilder.rdf.Rdf;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import com.cmclinnovations.stack.clients.blazegraph.BlazegraphClient;
+import com.cmclinnovations.stack.clients.ontop.OntopClient;
 import com.cmclinnovations.stack.clients.rdf4j.Rdf4jClient;
 
 import cares.cam.ac.uk.classes.CalculationMethod;
@@ -45,6 +46,8 @@ public class QueryClient {
     private static final Logger LOGGER = LogManager.getLogger(QueryClient.class);
 
     RemoteStoreClient federateClient;
+    RemoteStoreClient ontopClient;
+    RemoteStoreClient blazegraphClient;
 
     static final Prefix PREFIX_DERIVATION = SparqlBuilder
             .prefix("derivation", Rdf.iri("https://www.theworldavatar.com/kg/ontoderivation/"));
@@ -70,6 +73,17 @@ public class QueryClient {
     public QueryClient() {
         String stackOutgoing = Rdf4jClient.getInstance().readEndpointConfig().getOutgoingRepositoryUrl();
         federateClient = new RemoteStoreClient(stackOutgoing);
+
+        String ontopUrl = OntopClient.getInstance("ontop").readEndpointConfig().getUrl();
+        ontopClient = new RemoteStoreClient(ontopUrl);
+
+        String namespace;
+        if (Config.NAMESPACE == null) {
+            namespace = "kb";
+        } else {
+            namespace = Config.NAMESPACE;
+        }
+        blazegraphClient = BlazegraphClient.getInstance().getRemoteStoreClient(namespace);
     }
 
     JSONObject getExposureResults(String iri) {
@@ -90,7 +104,7 @@ public class QueryClient {
         query.where(gp1, gp2).select(exposureValueVar, exposure, calculation, unitVar).prefix(
                 PREFIX_DERIVATION, PREFIX_EXPOSURE).distinct();
 
-        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
+        JSONArray queryResult = ontopClient.executeQuery(query.getQueryString());
 
         Map<String, CalculationMethod> calculationMap = new HashMap<>();
         Set<String> exposureSet = new HashSet<>();
@@ -225,7 +239,7 @@ public class QueryClient {
 
         query.where(gp1, gp2, gp3, vPattern).prefix(PREFIX_EXPOSURE).distinct();
 
-        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
+        JSONArray queryResult = blazegraphClient.executeQuery(query.getQueryString());
 
         for (int i = 0; i < queryResult.length(); i++) {
             String calculationIri = queryResult.getJSONObject(i).getString(calculation.getVarName());
@@ -267,83 +281,6 @@ public class QueryClient {
         }
 
         return exposureMap;
-    }
-
-    JSONObject getResults(String iri) {
-        SelectQuery query = Queries.SELECT();
-        Iri subject = Rdf.iri(iri);
-        Variable derivation = query.var();
-        Variable exposure = query.var();
-        Variable calculation = query.var();
-        Variable exposureResult = query.var();
-        Variable exposureValueVar = query.var();
-        Variable distanceVar = query.var();
-        Variable calculationType = query.var();
-        Variable unitVar = query.var();
-
-        TriplePattern gp1 = derivation.has(IS_DERIVED_FROM, subject)
-                .andHas(PropertyPathBuilder.of(IS_DERIVED_FROM).then(RDFS.LABEL).build(), exposure);
-        TriplePattern gp2 = exposureResult.has(BELONGS_TO, derivation).andHas(HAS_VALUE, exposureValueVar)
-                .andHas(HAS_CALCULATION_METHOD, calculation).andHas(HAS_UNIT, unitVar);
-        TriplePattern gp3 = calculation.isA(calculationType).andHas(HAS_DISTANCE, distanceVar);
-
-        query.where(gp1, gp2, gp3).select(exposureValueVar, exposure, calculationType, distanceVar, unitVar).prefix(
-                PREFIX_DERIVATION, PREFIX_EXPOSURE);
-
-        JSONArray queryResult = federateClient.executeQuery(query.getQueryString());
-
-        JSONObject metadata = new JSONObject();
-
-        for (int i = 0; i < queryResult.length(); i++) {
-            String datasetName = queryResult.getJSONObject(i).getString(exposure.getVarName());
-            String calculationName = queryResult.getJSONObject(i).getString(calculationType.getVarName());
-            calculationName = calculationName.substring(calculationName.lastIndexOf('/') + 1);
-            double distance = parseRdfLiteral(queryResult.getJSONObject(i).getString(distanceVar.getVarName()));
-            double exposureValue = parseRdfLiteral(
-                    queryResult.getJSONObject(i).getString(exposureValueVar.getVarName()));
-            String unit = queryResult.getJSONObject(i).getString(unitVar.getVarName());
-
-            String formattedValue = String.format("%.0f %s", exposureValue, unit);
-
-            String distanceKey = String.format("%.0f", distance) + " m";
-
-            if (!metadata.has(datasetName)) {
-                JSONObject exposureJson = new JSONObject();
-                JSONObject calculationJson = new JSONObject();
-                calculationJson.put("collapse", true);
-
-                metadata.put(datasetName, exposureJson);
-                exposureJson.put(calculationName, calculationJson);
-                calculationJson.put(distanceKey, formattedValue);
-            } else {
-                if (metadata.getJSONObject(datasetName).has(calculationName)) {
-                    metadata.getJSONObject(datasetName).getJSONObject(calculationName).put(distanceKey, formattedValue);
-                } else {
-                    JSONObject calculationJson = new JSONObject();
-                    calculationJson.put("collapse", true);
-                    calculationJson.put(distanceKey, formattedValue);
-                    metadata.getJSONObject(datasetName).put(calculationName, calculationJson);
-                }
-            }
-
-        }
-
-        for (String dataset : metadata.keySet()) {
-            JSONObject exposureJson = metadata.getJSONObject(dataset);
-            for (String calculationName : exposureJson.keySet()) {
-                JSONObject calculationJson = exposureJson.getJSONObject(calculationName);
-                // distance keys
-                // the main purpose of these few lines is to ensure that that properties like 50
-                // m, 100 m appears in ascending order in the visualisation
-                Set<String> distanceKeys = calculationJson.keySet();
-                List<String> distanceSorted = distanceKeys.stream().filter(d -> !d.contentEquals("collapse"))
-                        .sorted(Comparator.comparingDouble(this::extractNumber))
-                        .collect(Collectors.toList());
-                calculationJson.put("display_order", distanceSorted);
-            }
-        }
-
-        return metadata;
     }
 
     /**
