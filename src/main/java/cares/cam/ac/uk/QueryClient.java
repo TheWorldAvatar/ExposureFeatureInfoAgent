@@ -78,12 +78,10 @@ public class QueryClient {
         ontopClient = new RemoteStoreClient(ontopUrl);
 
         String namespace;
-        if (Config.NAMESPACE == null) {
-            namespace = "kb";
-        } else {
+        if (Config.NAMESPACE != null) {
             namespace = Config.NAMESPACE;
+            blazegraphClient = BlazegraphClient.getInstance().getRemoteStoreClient(namespace);
         }
-        blazegraphClient = BlazegraphClient.getInstance().getRemoteStoreClient(namespace);
     }
 
     JSONObject getExposureResults(String iri) {
@@ -239,7 +237,12 @@ public class QueryClient {
 
         query.where(gp1, gp2, gp3, vPattern).prefix(PREFIX_EXPOSURE).distinct();
 
-        JSONArray queryResult = blazegraphClient.executeQuery(query.getQueryString());
+        JSONArray queryResult;
+        if (Config.NAMESPACE != null) {
+            queryResult = blazegraphClient.executeQuery(query.getQueryString());
+        } else {
+            queryResult = federateClient.executeQuery(query.getQueryString());
+        }
 
         for (int i = 0; i < queryResult.length(); i++) {
             String calculationIri = queryResult.getJSONObject(i).getString(calculation.getVarName());
