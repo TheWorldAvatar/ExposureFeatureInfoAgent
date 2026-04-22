@@ -131,6 +131,10 @@ public class QueryClient {
                 datasetName = result.getExposureIri();
             }
 
+            if (!calculationMap.containsKey(result.getCalculationIri())) {
+                continue;
+            }
+
             CalculationMethod calcMethod = calculationMap.get(result.getCalculationIri());
             if (!metadata.has(datasetName)) {
                 JSONObject datasetJson = new JSONObject();
@@ -244,8 +248,11 @@ public class QueryClient {
             queryResult = federateClient.executeQuery(query.getQueryString());
         }
 
+        Set<String> queriedCalc = new HashSet<>();
+
         for (int i = 0; i < queryResult.length(); i++) {
             String calculationIri = queryResult.getJSONObject(i).getString(calculation.getVarName());
+            queriedCalc.add(calculationIri);
             String calcType = queryResult.getJSONObject(i).getString(calculationType.getVarName());
             calcType = calcType.substring(calcType.lastIndexOf('/') + 1);
             calculationMap.get(calculationIri).setName(calcType);
@@ -262,6 +269,14 @@ public class QueryClient {
                 calculationMap.get(calculationIri).setDatasetFilter(filterColumn, filterValue);
             }
         }
+
+        // this should not be needed unless previously there are deleted calculations
+        // from blazegraph and the corresponding results are not removed from postgis
+        if (queriedCalc.size() != calculationMap.size()) {
+            LOGGER.warn("Some calculation instances in the exposure_results table are not present in the triple store");
+        }
+
+        calculationMap.keySet().retainAll(queriedCalc);
     }
 
     Map<String, String> getExposureName(Set<String> exposureSet) {
