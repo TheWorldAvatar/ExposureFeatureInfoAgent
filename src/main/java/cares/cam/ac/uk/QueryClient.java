@@ -58,6 +58,25 @@ import org.apache.logging.log4j.LogManager;
 
 public class QueryClient {
     private static final Logger LOGGER = LogManager.getLogger(QueryClient.class);
+    private static final Set<String> DATASET_ACRONYMS = Set.of("ndvi", "utci");
+
+    static String formatDatasetLabel(String name) {
+        String label = name.strip().replace('_', ' ')
+                .replaceAll("([a-z0-9])([A-Z])", "$1 $2")
+                .replaceAll("\\s+", " ");
+        if (label.isEmpty()) {
+            return label;
+        }
+
+        String[] words = label.split(" ");
+        for (int i = 0; i < words.length; i++) {
+            if (DATASET_ACRONYMS.contains(words[i].toLowerCase(Locale.ROOT))) {
+                words[i] = words[i].toUpperCase(Locale.ROOT);
+            }
+        }
+        label = String.join(" ", words);
+        return Character.toUpperCase(label.charAt(0)) + label.substring(1);
+    }
 
     private static String formatCalculationLabel(String name) {
         String label = name.replaceAll("([A-Z]+)([A-Z][a-z])", "$1 $2")
@@ -182,7 +201,7 @@ public class QueryClient {
         for (ExposureResult result : resultList) {
             String datasetName;
             if (exposureMap.containsKey(result.getExposureIri())) {
-                datasetName = exposureMap.get(result.getExposureIri());
+                datasetName = formatDatasetLabel(exposureMap.get(result.getExposureIri()));
             } else {
                 datasetName = result.getExposureIri();
             }
@@ -468,7 +487,8 @@ public class QueryClient {
 
             String datasetName;
             if (queryResult2.getJSONObject(i).has("exposure_dataset_name")) {
-                datasetName = queryResult2.getJSONObject(i).getString("exposure_dataset_name");
+                datasetName = formatDatasetLabel(
+                        queryResult2.getJSONObject(i).getString("exposure_dataset_name"));
             } else {
                 datasetName = queryResult2.getJSONObject(i).getString("exposure_dataset");
             }
