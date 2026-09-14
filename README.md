@@ -77,8 +77,6 @@ This agent is designed to be deployed on <https://github.com/TheWorldAvatar/hd4-
     `lowerbound` and `upperbound` in the RDF time representation returned by the trajectory: JSON numbers for
     numeric positions and strings for timestamps. These are the first and last returned observations of the stay.
 
-    An example response is provided - [sample trajectory result](sample%20trajectory%20result.json).
-
 ## Build
 
 Populate [docker\credentials](docker\credentials) with `repo_password.txt` and `repo_username.txt`.
