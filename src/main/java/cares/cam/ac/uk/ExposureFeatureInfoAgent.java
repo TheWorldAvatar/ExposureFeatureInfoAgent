@@ -40,16 +40,8 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
         if (req.getServletPath().equals(TIMELINE_ROUTE)) {
             try {
                 String userId = timelineAuthentication.authenticate(req.getHeader("Authorization"));
-                double lower;
-                double upper;
-                try {
-                    lower = Double.parseDouble(req.getParameter("lowerbound"));
-                    upper = Double.parseDouble(req.getParameter("upperbound"));
-                } catch (NumberFormatException | NullPointerException e) {
-                    throw new IllegalArgumentException("lowerbound and upperbound must be finite epoch seconds");
-                }
-                validateTimeBounds(lower, upper, java.time.Instant.now());
-                timelineResponse = queryClient.getTimelineResults(userId, lower, upper);
+                timelineResponse = queryClient.getTimelineResults(userId,
+                        req.getParameter("lowerbound"), req.getParameter("upperbound"));
             } catch (TimelineAuthentication.AuthenticationException e) {
                 status = Response.Status.UNAUTHORIZED.getStatusCode();
                 resp.setHeader("WWW-Authenticate", "Bearer");
@@ -97,12 +89,4 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
         queryClient = new QueryClient();
     }
 
-    static void validateTimeBounds(double lower, double upper, java.time.Instant now) {
-        long earliest = java.time.Instant.parse("2000-01-01T00:00:00Z").getEpochSecond();
-        long latest = now.plus(java.time.Duration.ofDays(1)).getEpochSecond();
-        if (!Double.isFinite(lower) || !Double.isFinite(upper) || lower < earliest || upper > latest || lower > upper) {
-            throw new IllegalArgumentException("Bounds must be ordered epoch seconds between "
-                    + "2000-01-01T00:00:00Z and the current time plus one day");
-        }
-    }
 }

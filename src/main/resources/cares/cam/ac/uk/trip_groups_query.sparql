@@ -1,10 +1,14 @@
 PREFIX time: <http://www.w3.org/2006/time#>
 PREFIX timeseries: <https://www.theworldavatar.com/kg/ontotimeseries/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-SELECT DISTINCT ?time ?trip
+SELECT DISTINCT ?timestamp ?time_number ?trip
 WHERE {
     ?observation timeseries:observationOf <[TRIP_IRI]> ;
-        time:hasTime/time:inTimePosition/time:numericPosition ?time ;
         timeseries:hasResult/timeseries:hasValue ?trip .
+
+    OPTIONAL { ?observation time:hasTime/time:inXSDDateTime ?timestamp . }
+    OPTIONAL { ?observation time:hasTime/time:inTimePosition/time:numericPosition ?time_number . }
+
+    [FILTER]
 }
-ORDER BY ?time

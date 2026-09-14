@@ -27,7 +27,11 @@ This agent is designed to be deployed on <https://github.com/TheWorldAvatar/hd4-
 
     This is for non-trajectory calculations where results are instantiated as triples.
 
-2) /trajectory/feature-info-agent/get
+2) /sql/feature-info-agent/get
+
+    Alternative for /feature-info-agent/get which queries results using SQL instead of SPARQL.
+
+3) /trajectory/feature-info-agent/get
 
     Parameters:
     - iri (mandatory): IRI of the trajectory (the instance that contains point time series)
@@ -40,6 +44,40 @@ This agent is designed to be deployed on <https://github.com/TheWorldAvatar/hd4-
     ```
 
     This is for trajectory based calculations where results are instantiated as time series.
+
+4) /timeline
+
+    Optional parameters:
+    - `lowerbound`
+    - `upperbound`
+    - If neither is supplied, the complete trajectory is queried.
+
+    Required header: `Authorization: Bearer <ACCESS_TOKEN>`.
+
+    Supplied bounds are inclusive. Like the trip-agent, each bound is interpreted as a number when possible;
+    otherwise it is parsed using the Java class declared by `timeseries:hasTimeClass`.
+
+    Mandatory environment variables to configure:
+    - KEYCLOAK_SERVER
+    - KEYCLOAK_REALM
+
+    ```bash
+    curl --get 'http://localhost:3838/exposure-feature-info-agent/timeline' -H "Authorization: Bearer ${ACCESS_TOKEN}" --data-urlencode 'lowerbound=1700000000' --data-urlencode 'upperbound=1700086400'
+    ```
+
+    For a time series using `java.time.Instant`, ISO-8601 timestamps can be supplied instead:
+
+    ```bash
+    curl --get 'http://localhost:3838/exposure-feature-info-agent/timeline' -H "Authorization: Bearer ${ACCESS_TOKEN}" --data-urlencode 'lowerbound=2025-03-08T15:13:42.805Z' --data-urlencode 'upperbound=2025-03-08T17:30:19.359Z'
+    ```
+
+    Returns a JSON array of groups ordered chronologically by their first observation time. Each group contains a `key` (`trip-<index>` or `stay-<number>`),
+    `trip` and `results` (dataset → calculation → distance → formatted value).
+    Each contiguous run of index 0 is a separate stay, additionally containing
+    `lowerbound` and `upperbound` in the RDF time representation returned by the trajectory: JSON numbers for
+    numeric positions and strings for timestamps. These are the first and last returned observations of the stay.
+
+    An example response is provided - [sample trajectory result](sample%20trajectory%20result.json).
 
 ## Build
 
