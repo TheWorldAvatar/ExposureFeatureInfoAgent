@@ -8,13 +8,14 @@ WHERE {
     <[TRIP_IRI]> timeseries:hasTimeSeries ?timeseries .
     ?result timeseries:hasTimeSeries ?timeseries .
     ?obsTrip timeseries:observationOf <[TRIP_IRI]> ;
-              time:hasTime/time:inTimePosition/time:numericPosition "[TIME_VALUE]"^^xsd:double ;
+              [TIME_PREDICATE] ?sample_time ;
               timeseries:hasResult/timeseries:hasValue "[TRIP_VALUE]"^^xsd:integer .
 
     ?obsTraj timeseries:observationOf ?result ;
-              time:hasTime/time:inTimePosition/time:numericPosition "[TIME_VALUE]"^^xsd:double ;
+              [TIME_PREDICATE] ?sample_time ;
               timeseries:hasResult/timeseries:hasValue ?val .
 
     ?result a exposure:ExposureResult .
+    FILTER (?sample_time = [TIME_VALUE])
 }
 GROUP BY ?result ?val
