@@ -9,13 +9,14 @@ WHERE {
     ?result timeseries:hasTimeSeries ?timeseries .
 
     ?obsTrip timeseries:observationOf <[POINT_IRI]> ;
-              time:hasTime/time:inTimePosition/time:numericPosition "[TIME_VALUE]"^^xsd:double .
+              [TIME_PREDICATE] ?sample_time .
 
     ?obsTraj timeseries:observationOf ?result ;
-              time:hasTime/time:inTimePosition/time:numericPosition "[TIME_VALUE]"^^xsd:double ;
+              [TIME_PREDICATE] ?sample_time ;
               timeseries:hasResult ?res .
     ?res timeseries:hasValue ?val .
 
     ?result a exposure:ExposureResult .
+    FILTER (?sample_time = [TIME_VALUE])
 }
 GROUP BY ?result ?val

@@ -3,12 +3,18 @@ PREFIX timeseries: <https://www.theworldavatar.com/kg/ontotimeseries/>
 PREFIX exposure: <https://www.theworldavatar.com/kg/ontoexposure/>
 PREFIX derivation: <https://www.theworldavatar.com/kg/ontoderivation/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX dcterms: <http://purl.org/dc/terms/>
 
 SELECT ?result ?calculation_type ?distance ?unit ?exposure_dataset_name ?exposure_dataset
 WHERE {
     [VALUES_CLAUSE]
     ?exposure_dataset a <http://www.w3.org/ns/dcat#Dataset>.
-    OPTIONAL{?exposure_dataset rdfs:label ?exposure_dataset_name.}
+    OPTIONAL { ?exposure_dataset rdfs:label ?exposure_dataset_label . }
+    OPTIONAL {
+        FILTER NOT EXISTS { ?exposure_dataset rdfs:label ?existing_label . }
+        ?exposure_dataset dcterms:title ?exposure_dataset_title .
+    }
+    BIND(COALESCE(?exposure_dataset_label, ?exposure_dataset_title) AS ?exposure_dataset_name)
     
     ?derivation derivation:isDerivedFrom <[SUBJECT]>;
         derivation:isDerivedFrom ?exposure_dataset.

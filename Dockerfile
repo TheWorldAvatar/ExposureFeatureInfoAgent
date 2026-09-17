@@ -16,7 +16,7 @@ RUN sed -i "s|REPO_USERNAME|$(cat ../credentials/repo_username.txt)|;s|REPO_PASS
 WORKDIR /root/code
 
 COPY pom.xml ./pom.xml
-RUN --mount=type=cache,id=aermod-mvn,target=/root/.m2/repository,sharing=locked mvn clean dependency:resolve
+RUN --mount=type=cache,id=m2-cache,target=/root/.m2/repository,sharing=locked mvn dependency:resolve
 
 #==================================================================================================
 
