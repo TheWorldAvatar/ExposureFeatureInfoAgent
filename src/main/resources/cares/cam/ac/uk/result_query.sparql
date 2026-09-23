@@ -5,7 +5,7 @@ PREFIX derivation: <https://www.theworldavatar.com/kg/ontoderivation/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX dcterms: <http://purl.org/dc/terms/>
 
-SELECT ?result ?calculation_type ?distance ?unit ?exposure_dataset_name ?exposure_dataset
+SELECT ?result ?calculation ?lowerbound ?upperbound ?unit ?exposure_dataset_name ?exposure_dataset
 WHERE {
     [VALUES_CLAUSE]
     ?exposure_dataset a <http://www.w3.org/ns/dcat#Dataset>.
@@ -24,6 +24,6 @@ WHERE {
         exposure:hasCalculationMethod ?calculation ;
         exposure:hasUnit ?unit .
 
-    ?calculation a ?calculation_type ;
-                 exposure:hasDistance ?distance .
+    OPTIONAL { ?calculation exposure:hasLowerbound ?lowerbound . }
+    OPTIONAL { ?calculation exposure:hasUpperbound ?upperbound . }
 }

@@ -11,6 +11,39 @@ public class CalculationMethod {
     Double distance = null;// buffer distance
     String name; // public facing name
     Map<String, String> datasetFilter;
+    private String lowerBound;
+    private String upperBound;
+
+    public void setBounds(String lower, String upper) {
+        lowerBound = lower;
+        upperBound = upper;
+    }
+
+    public String getBoundsLabel() {
+        if (lowerBound == null && upperBound == null) return null;
+        if (lowerBound == null) return "Until " + formatBound(upperBound);
+        if (upperBound == null) return "From " + formatBound(lowerBound);
+        String lower = formatBound(lowerBound);
+        String upper = formatBound(upperBound);
+        if (lower.endsWith(" UTC") && upper.endsWith(" UTC")) lower = lower.substring(0, lower.length() - 4);
+        return lower + " – " + upper;
+    }
+
+    private static String formatBound(String value) {
+        try {
+            java.time.Instant instant = java.time.Instant.parse(value);
+            java.time.format.DateTimeFormatterBuilder builder = new java.time.format.DateTimeFormatterBuilder()
+                    .appendPattern("uuuu-MM-dd HH:mm");
+            if (instant.atOffset(java.time.ZoneOffset.UTC).getSecond() != 0 || instant.getNano() != 0) {
+                builder.appendPattern(":ss");
+                builder.appendFraction(java.time.temporal.ChronoField.NANO_OF_SECOND, 0, 9, true);
+            }
+            return builder.toFormatter(java.util.Locale.ROOT).withZone(java.time.ZoneOffset.UTC)
+                    .format(instant) + " UTC";
+        } catch (java.time.format.DateTimeParseException e) {
+            return value;
+        }
+    }
     private static final String YEAR_FILTER = "year";
 
     public CalculationMethod(String iri) {

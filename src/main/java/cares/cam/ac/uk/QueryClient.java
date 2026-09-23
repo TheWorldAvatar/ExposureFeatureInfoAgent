@@ -196,6 +196,11 @@ public class QueryClient {
         setCalculationProperties(calculationMap);
         Map<String, String> exposureMap = getExposureName(exposureSet);
 
+        return formatExposureResults(resultList, calculationMap, exposureMap, false);
+    }
+
+    static JSONObject formatExposureResults(List<ExposureResult> resultList,
+            Map<String, CalculationMethod> calculationMap, Map<String, String> exposureMap, boolean trajectory) {
         JSONObject metadata = new JSONObject();
 
         for (ExposureResult result : resultList) {
@@ -269,7 +274,7 @@ public class QueryClient {
 
             String formattedDistance = calcMethod.getFormattedDistance();
             if (formattedDistance != null) {
-                currentLevel.put(formattedDistance, result.getFormattedValue());
+                if (trajectory) putTrajectoryValue(currentLevel, formattedDistance, calcMethod.getBoundsLabel(), result.getFormattedValue()); else currentLevel.put(formattedDistance, result.getFormattedValue());
 
                 // the purpose of this is to display distances in ascending order
                 if (currentLevel.has("display_order")) {
@@ -279,7 +284,7 @@ public class QueryClient {
                     if (!order.contains(formattedDistance)) {
                         order.add(formattedDistance);
                         List<String> distanceSorted = order.stream().filter(d -> !d.contentEquals("collapse"))
-                                .sorted(Comparator.comparingDouble(this::extractNumber))
+                                .sorted(Comparator.comparingDouble(QueryClient::extractNumber))
                                 .collect(Collectors.toList());
                         currentLevel.put("display_order", distanceSorted);
                     }
@@ -288,7 +293,7 @@ public class QueryClient {
                     currentLevel.put("display_order", order);
                 }
             } else {
-                currentLevel.put("-", result.getFormattedValue());
+                if (trajectory) putTrajectoryValue(currentLevel, "-", calcMethod.getBoundsLabel(), result.getFormattedValue()); else currentLevel.put("-", result.getFormattedValue());
             }
         }
 
@@ -380,7 +385,7 @@ public class QueryClient {
     /**
      * extracts number from strings like "400 m" or "400m"
      */
-    private double extractNumber(String s) {
+    private static double extractNumber(String s) {
         Pattern numberPattern = Pattern.compile("(\\d+(?:\\.\\d+)?)");
         Matcher m = numberPattern.matcher(s);
 
@@ -474,65 +479,27 @@ public class QueryClient {
             throw new RuntimeException("Unexpected query result size");
         }
 
-        Map<String, Double> resultToDistanceMap = new HashMap<>();
-        Map<String, String> resultToCalculationMap = new HashMap<>();
-        Map<String, String> resultToUnitMap = new HashMap<>();
-        Map<String, String> resultToDatasetMap = new HashMap<>();
-
+        Map<String, CalculationMethod> calculations = new HashMap<>();
+        Map<String, String> datasets = new HashMap<>();
+        List<ExposureResult> results = new ArrayList<>();
         for (int i = 0; i < queryResult2.length(); i++) {
-            String resultIri = queryResult2.getJSONObject(i).getString("result");
-            String calculation = queryResult2.getJSONObject(i).getString("calculation_type");
-            double distance = queryResult2.getJSONObject(i).getDouble("distance");
-            String unit = queryResult2.getJSONObject(i).getString("unit");
-
-            String datasetName;
-            if (queryResult2.getJSONObject(i).has("exposure_dataset_name")) {
-                datasetName = formatDatasetLabel(
-                        queryResult2.getJSONObject(i).getString("exposure_dataset_name"));
-            } else {
-                datasetName = queryResult2.getJSONObject(i).getString("exposure_dataset");
-            }
-
-            resultToCalculationMap.put(resultIri, calculation);
-            resultToDistanceMap.put(resultIri, distance);
-            resultToUnitMap.put(resultIri, unit);
-            resultToDatasetMap.put(resultIri, datasetName);
+            JSONObject row = queryResult2.getJSONObject(i);
+            String resultIri = row.getString("result");
+            String calculationIri = row.getString("calculation");
+            CalculationMethod calculation = calculations.computeIfAbsent(calculationIri, CalculationMethod::new);
+            calculation.setBounds(row.has("lowerbound") ? row.getString("lowerbound") : null,
+                    row.has("upperbound") ? row.getString("upperbound") : null);
+            String dataset = row.getString("exposure_dataset");
+            if (row.has("exposure_dataset_name")) datasets.put(dataset, row.getString("exposure_dataset_name"));
+            String unit = row.optString("unit").strip();
+            String formatted = String.format("%.0f %s", resultToValueMap.get(resultIri), unit.isBlank() ? "[-]" : unit);
+            results.add(new ExposureResult(dataset, calculationIri, resultToValueMap.get(resultIri), unit) {
+                @Override
+                public String getFormattedValue() { return formatted; }
+            });
         }
-
-        JSONObject metadata = new JSONObject();
-        resultToValueMap.keySet().forEach(r -> {
-            double exposureValue = resultToValueMap.get(r);
-            double distance = resultToDistanceMap.get(r);
-            String datasetName = resultToDatasetMap.get(r);
-            String exposureUnit = resultToUnitMap.get(r);
-            String calculationName = resultToCalculationMap.get(r);
-            calculationName = formatCalculationLabel(
-                    calculationName.substring(calculationName.lastIndexOf('/') + 1));
-            String distanceKey = String.format("%.0f", distance) + " m";
-            String formattedValue = String.format("%.0f %s", exposureValue,
-                    exposureUnit == null || exposureUnit.isBlank() ? "[-]" : exposureUnit.strip());
-
-            if (!metadata.has(datasetName)) {
-                JSONObject exposureJson = new JSONObject();
-                JSONObject calculationJson = new JSONObject();
-                calculationJson.put("collapse", true);
-
-                metadata.put(datasetName, exposureJson);
-                exposureJson.put(calculationName, calculationJson);
-                calculationJson.put(distanceKey, formattedValue);
-            } else {
-                if (metadata.getJSONObject(datasetName).has(calculationName)) {
-                    metadata.getJSONObject(datasetName).getJSONObject(calculationName).put(distanceKey,
-                            formattedValue);
-                } else {
-                    JSONObject calculationJson = new JSONObject();
-                    calculationJson.put("collapse", true);
-                    calculationJson.put(distanceKey, formattedValue);
-                    metadata.getJSONObject(datasetName).put(calculationName, calculationJson);
-                }
-            }
-        });
-
+        setCalculationProperties(calculations);
+        JSONObject metadata = formatExposureResults(results, calculations, datasets, true);
         return metadata;
     }
 
@@ -592,25 +559,23 @@ public class QueryClient {
         Boolean useNumericTime = suppliedBound == null ? null : suppliedBound.numeric;
         JSONArray observations = new JSONArray();
         String template;
-        try (InputStream is = QueryClient.class.getResourceAsStream("trip_groups_query.sparql")) {
+        try (InputStream is = QueryClient.class.getResourceAsStream("timeline_trip_groups_query.sparql")) {
             template = IOUtils.toString(is, StandardCharsets.UTF_8);
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read trip_groups_query.sparql", e);
         }
         for (int i = 0; i < points.length(); i++) {
             String pointIri = points.getJSONObject(i).getString("point");
-            String tripIri = getTripIri(pointIri);
-            if (tripIri == null) {
-                continue; // A user's new point series may not have been processed yet.
-            }
-            String query = template.replace("[TRIP_IRI]", tripIri)
+            JSONObject measures = getTimelineMeasures(pointIri);
+            String query = template.replace("[TRIP_IRI]", measures.getString("trip"))
+                    .replace("[SESSION_IRI]", measures.getString("session"))
                     .replace("[FILTER]", buildTimeFilter(lowerBound, upperBound));
             JSONArray rows = federateClient.executeQuery(query);
             for (int j = 0; j < rows.length(); j++) {
                 observations.put(rows.getJSONObject(j).put("point", pointIri));
             }
         }
-        JSONArray groups = groupTripObservations(observations, useNumericTime);
+        JSONArray groups = groupTripObservations(observations, useNumericTime, true);
         for (int i = 0; i < groups.length(); i++) {
             JSONObject group = groups.getJSONObject(i);
             JSONObject results = new JSONObject();
@@ -624,6 +589,21 @@ public class QueryClient {
             group.put("results", results);
         }
         return groups;
+    }
+
+    private JSONObject getTimelineMeasures(String pointIri) {
+        String query = "SELECT DISTINCT ?trip ?session WHERE { "
+                + Rdf.iri(pointIri).getQueryString()
+                + " <https://www.theworldavatar.com/kg/ontotimeseries/hasTimeSeries> ?ts . "
+                + "?trip <https://www.theworldavatar.com/kg/ontotimeseries/hasTimeSeries> ?ts ; "
+                + "a <https://www.theworldavatar.com/kg/ontoexposure/Trip> . "
+                + "?session <https://www.theworldavatar.com/kg/ontotimeseries/hasTimeSeries> ?ts ; "
+                + "a <https://www.theworldavatar.com/kg/ontodevice/SessionID> . }";
+        JSONArray result = federateClient.executeQuery(query);
+        if (result.length() != 1) {
+            throw new IllegalStateException("Timeline trajectory requires exactly one trip and session-ID measure: " + pointIri);
+        }
+        return result.getJSONObject(0);
     }
 
     private static boolean isNonNumericBound(String value) {
@@ -680,15 +660,41 @@ public class QueryClient {
         }
     }
 
+    static void putTrajectoryValue(JSONObject target, String distance, String bounds, String value) {
+        JSONObject entry = new JSONObject();
+        entry.put(distance, bounds == null ? value : new JSONObject().put("collapse", true).put(bounds, value));
+        mergeTimelineResults(target, entry);
+    }
+
     static void mergeTimelineResults(JSONObject target, JSONObject source) {
+        mergeTimelineResults(target, source, "");
+    }
+
+    private static void mergeTimelineResults(JSONObject target, JSONObject source, String path) {
         for (String key : source.keySet()) {
             Object value = source.get(key);
+            String location = path.isEmpty() ? key : path + " / " + key;
             if (!target.has(key)) {
                 target.put(key, value);
             } else if (value instanceof JSONObject && target.get(key) instanceof JSONObject) {
-                mergeTimelineResults(target.getJSONObject(key), (JSONObject) value);
+                mergeTimelineResults(target.getJSONObject(key), (JSONObject) value, location);
+            } else if (key.equals("display_order") && value instanceof JSONArray) {
+                Set<String> entries = new HashSet<>();
+                target.getJSONArray(key).forEach(v -> entries.add(v.toString()));
+                ((JSONArray) value).forEach(v -> entries.add(v.toString()));
+                List<String> sorted = new ArrayList<>(entries);
+                sorted.sort(Comparator.comparingDouble(QueryClient::extractNumber));
+                target.put(key, sorted);
+            } else if ((key.endsWith(" m") || key.equals("-"))
+                    && (value instanceof JSONObject || target.get(key) instanceof JSONObject)) {
+                JSONObject existing = target.get(key) instanceof JSONObject ? target.getJSONObject(key)
+                        : new JSONObject().put("collapse", true).put("No bounds", target.get(key));
+                JSONObject incoming = value instanceof JSONObject ? (JSONObject) value
+                        : new JSONObject().put("No bounds", value);
+                mergeTimelineResults(existing, incoming, location);
+                target.put(key, existing);
             } else if (!target.get(key).equals(value)) {
-                throw new IllegalStateException("Conflicting exposure results across point series for " + key);
+                throw new IllegalStateException("Conflicting exposure results across point series for " + location);
             }
         }
     }
@@ -723,15 +729,34 @@ public class QueryClient {
     }
 
     static JSONArray groupTripObservations(JSONArray observations, Boolean useNumericTime) {
+        return groupTripObservations(observations, useNumericTime, false);
+    }
+
+    static JSONArray groupTripObservations(JSONArray observations, Boolean useNumericTime, boolean sessionAware) {
         List<JSONObject> rows = new ArrayList<>();
+        java.util.Map<String, String> sessionsByObservation = new java.util.HashMap<>();
         for (int i = 0; i < observations.length(); i++) {
             JSONObject row = observations.getJSONObject(i);
             NativeTime time = NativeTime.fromQueryRow(row, useNumericTime);
+            if (sessionAware) {
+                if (row.isNull("session") || row.getString("session").isBlank()) {
+                    throw new IllegalStateException("Every timeline observation must have an aligned session ID");
+                }
+                String observation = row.optString("point") + "|" + time.toJson().toString();
+                String previousSession = sessionsByObservation.putIfAbsent(observation, row.getString("session"));
+                if (previousSession != null && !previousSession.equals(row.getString("session"))) {
+                    throw new IllegalStateException("Conflicting session IDs for the same observation");
+                }
+            }
             row.put("native_time", time.toJson());
             rows.add(row);
         }
-        rows.sort((left, right) -> NativeTime.fromJson(left.getJSONObject("native_time"))
-                .compareTo(NativeTime.fromJson(right.getJSONObject("native_time"))));
+        rows.sort((left, right) -> {
+            int comparison = NativeTime.fromJson(left.getJSONObject("native_time"))
+                    .compareTo(NativeTime.fromJson(right.getJSONObject("native_time")));
+            return comparison != 0 || !sessionAware ? comparison
+                    : left.optString("point").compareTo(right.optString("point"));
+        });
         for (int i = 0; i < rows.size(); i++) {
             NativeTime time = NativeTime.fromJson(rows.get(i).getJSONObject("native_time"));
             if (i > 0 && time.compareTo(NativeTime.fromJson(
@@ -746,7 +771,9 @@ public class QueryClient {
         for (int first = 0; first < rows.size();) {
             int trip = rows.get(first).getInt("trip");
             int end = first + 1;
-            while (end < rows.size() && rows.get(end).getInt("trip") == trip) {
+            while (end < rows.size() && rows.get(end).getInt("trip") == trip
+                    && (!sessionAware || trip != 0 || rows.get(end).getString("session")
+                            .equals(rows.get(first).getString("session")))) {
                 end++;
             }
             String key = trip == 0 ? "stay-" + (++stay) : "trip-" + trip;
