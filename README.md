@@ -71,11 +71,105 @@ This agent is designed to be deployed on <https://github.com/TheWorldAvatar/hd4-
     curl --get 'http://localhost:3838/exposure-feature-info-agent/timeline' -H "Authorization: Bearer ${ACCESS_TOKEN}" --data-urlencode 'lowerbound=2025-03-08T15:13:42.805Z' --data-urlencode 'upperbound=2025-03-08T17:30:19.359Z'
     ```
 
-    Returns a JSON array of groups ordered chronologically by their first observation time. Each group contains a `key` (`trip-<index>` or `stay-<number>`),
-    `trip` and `results` (dataset → calculation → distance → formatted value).
-    Each contiguous run of index 0 is a separate stay, additionally containing
-    `lowerbound` and `upperbound` in the RDF time representation returned by the trajectory: JSON numbers for
-    numeric positions and strings for timestamps. These are the first and last returned observations of the stay.
+    Example response (illustrative values, with timestamp-based stay bounds):
+
+    ```json
+    [
+        {
+            "key": "stay-1",
+            "trip": 0,
+            "lowerbound": "2025-03-08T15:13:42.805Z",
+            "upperbound": "2025-03-08T15:30:00Z",
+            "results": {
+                "Green space": {
+                    "collapse": true,
+                    "Area": {
+                        "collapse": true,
+                        "400 m": "1200 m²",
+                        "800 m": "5000 m²",
+                        "display_order": ["400 m", "800 m"]
+                    }
+                }
+            }
+        },
+        {
+            "key": "trip-1",
+            "trip": 1,
+            "results": {
+                "Green space": {
+                    "collapse": true,
+                    "Area": {
+                        "collapse": true,
+                        "400 m": "1800 m²",
+                        "800 m": "6500 m²",
+                        "display_order": ["400 m", "800 m"]
+                    }
+                }
+            }
+        },
+        {
+            "key": "stay-2",
+            "trip": 0,
+            "lowerbound": "2025-03-08T17:00:00Z",
+            "upperbound": "2025-03-08T17:30:19.359Z",
+            "results": {
+                "Green space": {
+                    "collapse": true,
+                    "Area": {
+                        "collapse": true,
+                        "400 m": "2200 m²",
+                        "800 m": "7000 m²",
+                        "display_order": ["400 m", "800 m"]
+                    }
+                }
+            }
+        }
+    ]
+    ```
+
+5) /timeline/getDatasets
+
+    Required header: `Authorization: Bearer <ACCESS_TOKEN>`
+
+    Mandatory environment variables to configure:
+    - KEYCLOAK_SERVER
+    - KEYCLOAK_REALM
+
+    Datasets are assumed to be uploaded using the [stack-data-uploader](<https://github.com/TheWorldAvatar/stack/tree/main/stack-data-uploader>).
+
+    Optional parameter: `rdf_type`, defaulting to `http://www.w3.org/ns/dcat#Dataset`. The submitted query is in the following form, where the class of `?dataset_iri` will be substituted if the `rdf_type` parameter is provided.
+
+    ```sparql
+    PREFIX dcat: <http://www.w3.org/ns/dcat#>
+    PREFIX dcterms: <http://purl.org/dc/terms/>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+    SELECT ?dataset_iri
+        (COALESCE(MIN(STR(?label)), MIN(STR(?title))) AS ?name)
+    WHERE {
+        ?catalog a dcat:Catalog ;
+                dcat:dataset ?dataset_iri .
+
+        ?dataset_iri a <http://www.w3.org/ns/dcat#Dataset> ;
+                    dcterms:title ?title .
+
+        OPTIONAL {
+            ?dataset_iri rdfs:label ?label .
+        }
+    }
+    GROUP BY ?dataset_iri
+    ORDER BY ?name ?dataset_iri
+    ```
+
+    Names in the result use `rdfs:label` or, if absent, `dcterms:title` (table name).
+
+    ```bash
+    curl --get 'http://localhost:3838/exposure-feature-info-agent/timeline/getDatasets' -H "Authorization: Bearer ${ACCESS_TOKEN}" --data-urlencode 'rdf_type=http://www.w3.org/ns/dcat#Dataset'
+    ```
+
+    ```json
+    [{"iri": "http://dataset", "name": "Heat dataset"}]
+    ```
 
 ## Build
 
