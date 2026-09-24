@@ -3,6 +3,8 @@ package cares.cam.ac.uk;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -122,6 +124,41 @@ public class QueryClient {
             namespace = Config.NAMESPACE;
             blazegraphClient = BlazegraphClient.getInstance().getRemoteStoreClient(namespace);
         }
+    }
+
+    JSONArray getDatasets(String rdfType) {
+        return federateClient.executeQuery(buildDatasetsQuery(rdfType));
+    }
+
+    static String buildDatasetsQuery(String rdfType) {
+        String type = rdfType == null ? "http://www.w3.org/ns/dcat#Dataset" : rdfType;
+        try {
+            // Reject relative IRIs and characters that could escape a SPARQL IRI reference.
+            if (!new URI(type).isAbsolute() || type.codePoints().anyMatch(c ->
+                    c <= 0x20 || Character.isWhitespace(c) || Character.isISOControl(c)
+                            || "<>\"{}|^`\\".indexOf(c) >= 0)) {
+                throw new IllegalArgumentException("rdf_type must be a valid absolute IRI");
+            }
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException("rdf_type must be a valid absolute IRI", e);
+        }
+        return """
+                PREFIX dcat: <http://www.w3.org/ns/dcat#>
+                PREFIX dcterms: <http://purl.org/dc/terms/>
+                PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+
+                SELECT ?iri
+                       (COALESCE(MIN(STR(?label)), MIN(STR(?title))) AS ?name)
+                WHERE {
+                    ?catalog a dcat:Catalog ;
+                             dcat:dataset ?iri .
+                    ?iri a <%s> ;
+                                 dcterms:title ?title .
+                    OPTIONAL { ?iri rdfs:label ?label . }
+                }
+                GROUP BY ?iri
+                ORDER BY ?name ?iri
+                """.formatted(type);
     }
 
     JSONObject getExposureResults(String iri) {
