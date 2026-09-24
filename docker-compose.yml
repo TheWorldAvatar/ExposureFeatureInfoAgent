@@ -1,4 +1,4 @@
 services:
   exposure-feature-info-agent:
-    image: ghcr.io/theworldavatar/exposure-feature-info-agent:2.2.0
+    image: ghcr.io/theworldavatar/exposure-feature-info-agent:2.3.0-11-improve-timeline-stays-and-expose-datasets-SNAPSHOT
     build: .

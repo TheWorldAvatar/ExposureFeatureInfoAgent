@@ -1,0 +1,21 @@
+PREFIX time: <http://www.w3.org/2006/time#>
+PREFIX timeseries: <https://www.theworldavatar.com/kg/ontotimeseries/>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT DISTINCT ?timestamp ?time_number ?trip ?session
+WHERE {
+    ?observation timeseries:observationOf <[TRIP_IRI]> ;
+        timeseries:hasResult/timeseries:hasValue ?trip .
+    OPTIONAL { ?observation time:hasTime/time:inXSDDateTime ?timestamp . }
+    OPTIONAL { ?observation time:hasTime/time:inTimePosition/time:numericPosition ?time_number . }
+    # Preserve observations with missing session data so Java can reject them.
+    OPTIONAL {
+        ?sessionObservation timeseries:observationOf <[SESSION_IRI]> ;
+            timeseries:hasResult/timeseries:hasValue ?session .
+        OPTIONAL { ?sessionObservation time:hasTime/time:inXSDDateTime ?sessionTimestamp . }
+        OPTIONAL { ?sessionObservation time:hasTime/time:inTimePosition/time:numericPosition ?sessionNumber . }
+        FILTER ((BOUND(?timestamp) && ?timestamp = ?sessionTimestamp)
+            || (!BOUND(?timestamp) && BOUND(?time_number) && ?time_number = ?sessionNumber))
+    }
+    [FILTER]
+}
