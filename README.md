@@ -167,6 +167,8 @@ This agent is designed to be deployed on <https://github.com/TheWorldAvatar/hd4-
     curl --get 'http://localhost:3838/exposure-feature-info-agent/timeline/getDatasets' -H "Authorization: Bearer ${ACCESS_TOKEN}" --data-urlencode 'rdf_type=http://www.w3.org/ns/dcat#Dataset'
     ```
 
+    Example response:
+
     ```json
     [{"iri": "http://dataset", "name": "Heat dataset"}]
     ```
