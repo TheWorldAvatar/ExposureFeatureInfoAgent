@@ -19,13 +19,15 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 @WebServlet(urlPatterns = { ExposureFeatureInfoAgent.STANDARD_ROUTE, ExposureFeatureInfoAgent.TRAJECTORY_ROUTE,
-        ExposureFeatureInfoAgent.SQL_ROUTE, ExposureFeatureInfoAgent.TIMELINE_ROUTE })
+        ExposureFeatureInfoAgent.SQL_ROUTE, ExposureFeatureInfoAgent.TIMELINE_ROUTE,
+        ExposureFeatureInfoAgent.DATASETS_ROUTE })
 public class ExposureFeatureInfoAgent extends HttpServlet {
     private static final Logger LOGGER = LogManager.getLogger(ExposureFeatureInfoAgent.class);
     static final String STANDARD_ROUTE = "/feature-info-agent/get";
     static final String SQL_ROUTE = "/sql/feature-info-agent/get";
     static final String TRAJECTORY_ROUTE = "/trajectory/feature-info-agent/get";
     static final String TIMELINE_ROUTE = "/timeline";
+    static final String DATASETS_ROUTE = "/timeline/getDatasets";
     QueryClient queryClient;
     private final TimelineAuthentication timelineAuthentication = new TimelineAuthentication();
 
@@ -35,13 +37,18 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
         LOGGER.info("Received request for iri = <{}>", iri);
 
         JSONObject response = new JSONObject();
-        JSONArray timelineResponse = null;
+        JSONArray arrayResponse = null;
         int status = Response.Status.OK.getStatusCode();
-        if (req.getServletPath().equals(TIMELINE_ROUTE)) {
+        if (req.getServletPath().equals(TIMELINE_ROUTE)
+                || req.getServletPath().equals(DATASETS_ROUTE)) {
             try {
                 String userId = timelineAuthentication.authenticate(req.getHeader("Authorization"));
-                timelineResponse = queryClient.getTimelineResults(userId,
-                        req.getParameter("lowerbound"), req.getParameter("upperbound"));
+                if (req.getServletPath().equals(DATASETS_ROUTE)) {
+                    arrayResponse = queryClient.getDatasets(req.getParameter("rdf_type"));
+                } else {
+                    arrayResponse = queryClient.getTimelineResults(userId,
+                            req.getParameter("lowerbound"), req.getParameter("upperbound"));
+                }
             } catch (TimelineAuthentication.AuthenticationException e) {
                 status = Response.Status.UNAUTHORIZED.getStatusCode();
                 resp.setHeader("WWW-Authenticate", "Bearer");
@@ -73,7 +80,7 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
             resp.setContentType(ContentType.APPLICATION_JSON.getMimeType());
             resp.setCharacterEncoding("UTF-8");
             resp.getOutputStream().write(
-                    (timelineResponse != null ? timelineResponse.toString() : response.toString())
+                    (arrayResponse != null ? arrayResponse.toString() : response.toString())
                             .getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {
             LOGGER.error(e.getMessage());
