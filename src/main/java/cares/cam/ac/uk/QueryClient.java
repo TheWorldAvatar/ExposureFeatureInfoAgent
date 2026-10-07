@@ -240,6 +240,18 @@ public class QueryClient {
             Map<String, CalculationMethod> calculationMap, Map<String, String> exposureMap, boolean trajectory) {
         JSONObject metadata = new JSONObject();
 
+        // Calculation IRIs can differ across filters and distances; group by the
+        // displayed calculation name within each dataset, using unrounded values.
+        Map<List<String>, Boolean> fractionalGroups = new HashMap<>();
+        for (ExposureResult result : resultList) {
+            CalculationMethod method = calculationMap.get(result.getCalculationIri());
+            if (method != null) {
+                List<String> group = List.of(result.getExposureIri(), method.getName());
+                double value = result.getValue();
+                fractionalGroups.merge(group, value != Math.rint(value), Boolean::logicalOr);
+            }
+        }
+
         for (ExposureResult result : resultList) {
             String datasetName;
             if (exposureMap.containsKey(result.getExposureIri())) {
@@ -253,6 +265,8 @@ public class QueryClient {
             }
 
             CalculationMethod calcMethod = calculationMap.get(result.getCalculationIri());
+            int decimalPlaces = fractionalGroups.get(List.of(result.getExposureIri(), calcMethod.getName())) ? 2 : 0;
+            String formattedValue = result.getFormattedValue(decimalPlaces);
             if (!metadata.has(datasetName)) {
                 JSONObject datasetJson = new JSONObject();
                 metadata.put(datasetName, datasetJson);
@@ -301,7 +315,7 @@ public class QueryClient {
 
             String formattedDistance = calcMethod.getFormattedDistance();
             if (formattedDistance != null) {
-                if (trajectory) putTrajectoryValue(currentLevel, formattedDistance, calcMethod.getBoundsLabel(), result.getFormattedValue()); else currentLevel.put(formattedDistance, result.getFormattedValue());
+                if (trajectory) putTrajectoryValue(currentLevel, formattedDistance, calcMethod.getBoundsLabel(), formattedValue); else currentLevel.put(formattedDistance, formattedValue);
 
                 // the purpose of this is to display distances in ascending order
                 if (currentLevel.has("display_order")) {
@@ -320,7 +334,7 @@ public class QueryClient {
                     currentLevel.put("display_order", order);
                 }
             } else {
-                if (trajectory) putTrajectoryValue(currentLevel, "-", calcMethod.getBoundsLabel(), result.getFormattedValue()); else currentLevel.put("-", result.getFormattedValue());
+                if (trajectory) putTrajectoryValue(currentLevel, "-", calcMethod.getBoundsLabel(), formattedValue); else currentLevel.put("-", formattedValue);
             }
         }
 
@@ -588,11 +602,8 @@ public class QueryClient {
             String dataset = row.getString("exposure_dataset");
             if (row.has("exposure_dataset_name")) datasets.put(dataset, row.getString("exposure_dataset_name"));
             String unit = row.optString("unit").strip();
-            String formatted = String.format("%.0f %s", resultToValueMap.get(resultIri), unit.isBlank() ? "[-]" : unit);
-            results.add(new ExposureResult(dataset, calculationIri, resultToValueMap.get(resultIri), unit) {
-                @Override
-                public String getFormattedValue() { return formatted; }
-            });
+            results.add(new ExposureResult(dataset, calculationIri, resultToValueMap.get(resultIri),
+                    unit.isBlank() ? "[-]" : unit));
         }
         setCalculationProperties(calculations);
         JSONObject metadata = formatExposureResults(results, calculations, datasets, true);

@@ -29,6 +29,16 @@ public class ExposureResult {
         return exposureIri;
     }
 
+    public double getValue() {
+        return value;
+    }
+
+    public String getFormattedValue(int decimalPlaces) {
+        String formattedValue = String.format(Locale.ROOT, "%." + decimalPlaces + "f %s", value, unit);
+        return percentile == null ? formattedValue : formattedValue + " (percentile: "
+                + String.format(Locale.ROOT, "%.2f", percentile) + ")";
+    }
+
     public String getFormattedValue() {
         String formattedValue;
         if (value > 1) {
