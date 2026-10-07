@@ -240,6 +240,18 @@ public class QueryClient {
             Map<String, CalculationMethod> calculationMap, Map<String, String> exposureMap, boolean trajectory) {
         JSONObject metadata = new JSONObject();
 
+        // Calculation IRIs can differ across filters and distances; group by the
+        // displayed calculation name within each dataset, using unrounded values.
+        Map<List<String>, Boolean> fractionalGroups = new HashMap<>();
+        for (ExposureResult result : resultList) {
+            CalculationMethod method = calculationMap.get(result.getCalculationIri());
+            if (method != null) {
+                List<String> group = List.of(result.getExposureIri(), method.getName());
+                double value = result.getValue();
+                fractionalGroups.merge(group, value != Math.rint(value), Boolean::logicalOr);
+            }
+        }
+
         for (ExposureResult result : resultList) {
             String datasetName;
             if (exposureMap.containsKey(result.getExposureIri())) {
@@ -253,6 +265,8 @@ public class QueryClient {
             }
 
             CalculationMethod calcMethod = calculationMap.get(result.getCalculationIri());
+            int decimalPlaces = fractionalGroups.get(List.of(result.getExposureIri(), calcMethod.getName())) ? 2 : 0;
+            String formattedValue = result.getFormattedValue(decimalPlaces);
             if (!metadata.has(datasetName)) {
                 JSONObject datasetJson = new JSONObject();
                 metadata.put(datasetName, datasetJson);
@@ -270,24 +284,14 @@ public class QueryClient {
                     currentLevel.put(filter, filterJson);
                 }
 
-                // sort year in ascending order
-                if (filter.contains("year")) {
-                    if (currentLevel.has("display_order")) {
-                        List<String> order = new ArrayList<>(
-                                currentLevel.getJSONArray("display_order").toList().stream()
-                                        .map(Object::toString).toList());
-
-                        if (!order.contains(filter)) {
-                            order.add(filter);
-                            List<String> yearSorted = order.stream().filter(d -> !d.contentEquals("collapse"))
-                                    .sorted(Comparator.comparingInt(
-                                            s -> Integer.parseInt(s.split("=")[1])))
-                                    .collect(Collectors.toList());
-                            currentLevel.put("display_order", yearSorted);
-                        }
-                    } else {
-                        currentLevel.put("display_order", List.of(filter));
-                    }
+                List<String> order = currentLevel.has("display_order")
+                        ? new ArrayList<>(currentLevel.getJSONArray("display_order").toList().stream()
+                                .map(Object::toString).toList())
+                        : new ArrayList<>();
+                if (!order.contains(filter)) {
+                    order.add(filter);
+                    order.sort(QueryClient::compareDatasetFilters);
+                    currentLevel.put("display_order", order);
                 }
 
                 currentLevel = currentLevel.getJSONObject(filter);
@@ -311,7 +315,7 @@ public class QueryClient {
 
             String formattedDistance = calcMethod.getFormattedDistance();
             if (formattedDistance != null) {
-                if (trajectory) putTrajectoryValue(currentLevel, formattedDistance, calcMethod.getBoundsLabel(), result.getFormattedValue()); else currentLevel.put(formattedDistance, result.getFormattedValue());
+                if (trajectory) putTrajectoryValue(currentLevel, formattedDistance, calcMethod.getBoundsLabel(), formattedValue); else currentLevel.put(formattedDistance, formattedValue);
 
                 // the purpose of this is to display distances in ascending order
                 if (currentLevel.has("display_order")) {
@@ -330,11 +334,80 @@ public class QueryClient {
                     currentLevel.put("display_order", order);
                 }
             } else {
-                if (trajectory) putTrajectoryValue(currentLevel, "-", calcMethod.getBoundsLabel(), result.getFormattedValue()); else currentLevel.put("-", result.getFormattedValue());
+                if (trajectory) putTrajectoryValue(currentLevel, "-", calcMethod.getBoundsLabel(), formattedValue); else currentLevel.put("-", formattedValue);
             }
         }
 
+        addDisplayOrder(metadata);
         return metadata;
+    }
+
+    // Apply ordering to every metadata object, excluding presentation control keys.
+    static void addDisplayOrder(JSONObject object) {
+        List<String> keys = object.keySet().stream()
+                .filter(key -> !key.equals("collapse") && !key.equals("display_order"))
+                .sorted(QueryClient::compareDisplayKeys).collect(Collectors.toList());
+        for (String key : keys) {
+            Object value = object.get(key);
+            if (value instanceof JSONObject) {
+                addDisplayOrder((JSONObject) value);
+            }
+        }
+        object.put("display_order", keys);
+    }
+
+    private static int compareDisplayKeys(String left, String right) {
+        if (left.contains("=") && right.contains("=")) {
+            return compareDatasetFilters(left, right);
+        }
+        // Natural ordering also handles labels such as "2 m" and "10 m".
+        Matcher leftTokens = Pattern.compile("[0-9]+(?:\\.[0-9]+)?|[^0-9]+").matcher(left);
+        Matcher rightTokens = Pattern.compile("[0-9]+(?:\\.[0-9]+)?|[^0-9]+").matcher(right);
+        while (leftTokens.find()) {
+            if (!rightTokens.find()) return 1;
+            int comparison = compareFilterValues(leftTokens.group(), rightTokens.group());
+            if (comparison != 0) return comparison;
+        }
+        return rightTokens.find() ? -1 : left.compareTo(right);
+    }
+
+    // Compare combined filters component by component, using numeric order where possible.
+    private static int compareDatasetFilters(String left, String right) {
+        String[] leftParts = left.split(", ");
+        String[] rightParts = right.split(", ");
+        for (int i = 0; i < Math.min(leftParts.length, rightParts.length); i++) {
+            String[] leftPair = leftParts[i].split("=", 2);
+            String[] rightPair = rightParts[i].split("=", 2);
+            int comparison = leftPair[0].compareTo(rightPair[0]);
+            if (comparison == 0 && leftPair.length == 2 && rightPair.length == 2) {
+                comparison = compareFilterValues(leftPair[1], rightPair[1]);
+            }
+            if (comparison != 0) {
+                return comparison;
+            }
+        }
+        int comparison = Integer.compare(leftParts.length, rightParts.length);
+        return comparison != 0 ? comparison : left.compareTo(right);
+    }
+
+    private static int compareFilterValues(String left, String right) {
+        BigDecimal leftNumber = parseFilterNumber(left);
+        BigDecimal rightNumber = parseFilterNumber(right);
+        if (leftNumber != null && rightNumber != null) {
+            return leftNumber.compareTo(rightNumber);
+        }
+        // Keep mixed numeric/text values in separate groups for a consistent total order.
+        if (leftNumber != null) return -1;
+        if (rightNumber != null) return 1;
+        return left.compareTo(right);
+    }
+
+    private static BigDecimal parseFilterNumber(String value) {
+        try {
+            return new BigDecimal(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     void setCalculationProperties(Map<String, CalculationMethod> calculationMap) {
@@ -529,11 +602,8 @@ public class QueryClient {
             String dataset = row.getString("exposure_dataset");
             if (row.has("exposure_dataset_name")) datasets.put(dataset, row.getString("exposure_dataset_name"));
             String unit = row.optString("unit").strip();
-            String formatted = String.format("%.0f %s", resultToValueMap.get(resultIri), unit.isBlank() ? "[-]" : unit);
-            results.add(new ExposureResult(dataset, calculationIri, resultToValueMap.get(resultIri), unit) {
-                @Override
-                public String getFormattedValue() { return formatted; }
-            });
+            results.add(new ExposureResult(dataset, calculationIri, resultToValueMap.get(resultIri),
+                    unit.isBlank() ? "[-]" : unit));
         }
         setCalculationProperties(calculations);
         JSONObject metadata = formatExposureResults(results, calculations, datasets, true);
@@ -705,6 +775,7 @@ public class QueryClient {
 
     static void mergeTimelineResults(JSONObject target, JSONObject source) {
         mergeTimelineResults(target, source, "");
+        addDisplayOrder(target);
     }
 
     private static void mergeTimelineResults(JSONObject target, JSONObject source, String path) {
@@ -720,7 +791,7 @@ public class QueryClient {
                 target.getJSONArray(key).forEach(v -> entries.add(v.toString()));
                 ((JSONArray) value).forEach(v -> entries.add(v.toString()));
                 List<String> sorted = new ArrayList<>(entries);
-                sorted.sort(Comparator.comparingDouble(QueryClient::extractNumber));
+                sorted.sort(QueryClient::compareDisplayKeys);
                 target.put(key, sorted);
             } else if ((key.endsWith(" m") || key.equals("-"))
                     && (value instanceof JSONObject || target.get(key) instanceof JSONObject)) {
