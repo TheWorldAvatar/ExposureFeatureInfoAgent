@@ -671,24 +671,45 @@ public class QueryClient {
         } catch (IOException e) {
             throw new IllegalStateException("Failed to read trip_groups_query.sparql", e);
         }
+        Boolean hasTrips = null;
         for (int i = 0; i < points.length(); i++) {
             String pointIri = points.getJSONObject(i).getString("point");
             JSONObject measures = getTimelineMeasures(pointIri);
-            String query = template.replace("[TRIP_IRI]", measures.getString("trip"))
-                    .replace("[SESSION_IRI]", measures.getString("session"))
-                    .replace("[FILTER]", buildTimeFilter(lowerBound, upperBound));
+            boolean labelled = measures.has("trip");
+            String query;
+            if (labelled) {
+                query = template.replace("[TRIP_IRI]", measures.getString("trip"))
+                        .replace("[SESSION_IRI]", measures.getString("session"))
+                        .replace("[FILTER]", buildTimeFilter(lowerBound, upperBound));
+            } else {
+                query = "PREFIX time: <http://www.w3.org/2006/time#> "
+                        + "PREFIX timeseries: <https://www.theworldavatar.com/kg/ontotimeseries/> "
+                        + "SELECT DISTINCT ?timestamp ?time_number WHERE { "
+                        + "?observation timeseries:observationOf " + Rdf.iri(pointIri).getQueryString() + " . "
+                        + "OPTIONAL { ?observation time:hasTime/time:inXSDDateTime ?timestamp . } "
+                        + "OPTIONAL { ?observation time:hasTime/time:inTimePosition/time:numericPosition ?time_number . } "
+                        + buildTimeFilter(lowerBound, upperBound) + " }";
+            }
             JSONArray rows = federateClient.executeQuery(query);
+            if (!rows.isEmpty()) {
+                if (hasTrips != null && hasTrips != labelled) {
+                    throw new IllegalArgumentException("Trajectory sources must either all have trip labels or all omit them");
+                }
+                hasTrips = labelled;
+            }
             for (int j = 0; j < rows.length(); j++) {
                 observations.put(rows.getJSONObject(j).put("point", pointIri));
             }
         }
-        JSONArray groups = groupTripObservations(observations, useNumericTime, true);
+        boolean labelled = Boolean.TRUE.equals(hasTrips);
+        JSONArray groups = labelled ? groupTripObservations(observations, useNumericTime, true)
+                : groupUnlabelledObservations(observations, useNumericTime);
         for (int i = 0; i < groups.length(); i++) {
             JSONObject group = groups.getJSONObject(i);
             JSONObject results = new JSONObject();
             JSONObject samples = group.getJSONObject("samples");
             for (String pointIri : samples.keySet()) {
-                mergeTimelineResults(results, getResultsTrajectory(pointIri, group.getInt("trip"),
+                mergeTimelineResults(results, getResultsTrajectory(pointIri, labelled ? group.getInt("trip") : null,
                         NativeTime.fromJson(samples.getJSONObject(pointIri))));
             }
             group.remove("samples");
@@ -702,15 +723,31 @@ public class QueryClient {
         String query = "SELECT DISTINCT ?trip ?session WHERE { "
                 + Rdf.iri(pointIri).getQueryString()
                 + " <https://www.theworldavatar.com/kg/ontotimeseries/hasTimeSeries> ?ts . "
-                + "?trip <https://www.theworldavatar.com/kg/ontotimeseries/hasTimeSeries> ?ts ; "
+                + "OPTIONAL { ?trip <https://www.theworldavatar.com/kg/ontotimeseries/hasTimeSeries> ?ts ; "
                 + "a <https://www.theworldavatar.com/kg/ontoexposure/Trip> . "
-                + "?session <https://www.theworldavatar.com/kg/ontotimeseries/hasTimeSeries> ?ts ; "
-                + "a <https://www.theworldavatar.com/kg/ontodevice/SessionID> . }";
+                + "OPTIONAL { ?session <https://www.theworldavatar.com/kg/ontotimeseries/hasTimeSeries> ?ts ; "
+                + "a <https://www.theworldavatar.com/kg/ontodevice/SessionID> . } } }";
         JSONArray result = federateClient.executeQuery(query);
         if (result.length() != 1) {
-            throw new IllegalStateException("Timeline trajectory requires exactly one trip and session-ID measure: " + pointIri);
+            throw new IllegalStateException("Timeline trajectory has missing or ambiguous measures: " + pointIri);
         }
-        return result.getJSONObject(0);
+        JSONObject measures = result.getJSONObject(0);
+        if (measures.has("trip") && (!measures.has("session") || measures.getString("session").isBlank())) {
+            throw new IllegalStateException("Timeline trajectory with trips requires a session-ID measure: " + pointIri);
+        }
+        return measures;
+    }
+
+    static JSONArray groupUnlabelledObservations(JSONArray observations, Boolean useNumericTime) {
+        JSONArray copies = new JSONArray();
+        for (int i = 0; i < observations.length(); i++) {
+            copies.put(new JSONObject(observations.getJSONObject(i).toString()).put("trip", 0));
+        }
+        JSONArray groups = groupTripObservations(copies, useNumericTime, false);
+        if (!groups.isEmpty()) {
+            groups.getJSONObject(0).put("key", "trajectory").put("trip", JSONObject.NULL);
+        }
+        return groups;
     }
 
     private static boolean isNonNumericBound(String value) {
