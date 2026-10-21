@@ -103,6 +103,7 @@ public class QueryClient {
     static final Iri BELONGS_TO = PREFIX_DERIVATION.iri("belongsTo");
     static final Iri HAS_VALUE = PREFIX_EXPOSURE.iri("hasValue");
     static final Iri HAS_DISTANCE = PREFIX_EXPOSURE.iri("hasDistance");
+    static final Iri HAS_COLUMN_NAME = PREFIX_EXPOSURE.iri("hasColumnName");
     static final Iri HAS_TIME_SERIES = PREFIX_TIMESERIES.iri("hasTimeSeries");
     static final Iri HAS_TIME_CLASS = PREFIX_TIMESERIES.iri("hasTimeClass");
     static final Iri HAS_UNIT = PREFIX_EXPOSURE.iri("hasUnit");
@@ -305,13 +306,21 @@ public class QueryClient {
                 }
             }
 
-            if (!currentLevel.has(calcMethod.getName())) {
-                JSONObject newJson = new JSONObject();
-                newJson.put("collapse", true);
-                currentLevel.put(calcMethod.getName(), newJson);
+            for (String group : calcMethod.getColumnGroups()) {
+                if (!currentLevel.has(group)) {
+                    currentLevel.put(group, new JSONObject().put("collapse", true));
+                }
+                currentLevel = currentLevel.getJSONObject(group);
             }
 
-            currentLevel = currentLevel.getJSONObject(calcMethod.getName());
+            String calculationLabel = calcMethod.getDisplayName();
+            if (!currentLevel.has(calculationLabel)) {
+                JSONObject newJson = new JSONObject();
+                newJson.put("collapse", true);
+                currentLevel.put(calculationLabel, newJson);
+            }
+
+            currentLevel = currentLevel.getJSONObject(calculationLabel);
 
             String formattedDistance = calcMethod.getFormattedDistance();
             if (formattedDistance != null) {
@@ -415,6 +424,7 @@ public class QueryClient {
 
         Variable calculation = query.var();
         Variable calculationType = query.var();
+        Variable columnNameVar = query.var();
         Variable distanceVar = query.var();
         Variable datasetFilter = query.var();
         Variable filterColumnVar = query.var();
@@ -430,7 +440,8 @@ public class QueryClient {
                 datasetFilter.has(HAS_FILTER_COLUMN, filterColumnVar).andHas(HAS_FILTER_VALUE, filterValueVar))
                 .optional();
 
-        query.where(gp1, gp2, gp3, vPattern).prefix(PREFIX_EXPOSURE).distinct();
+        GraphPattern columnNamePattern = calculation.has(HAS_COLUMN_NAME, columnNameVar).optional();
+        query.where(gp1, gp2, gp3, columnNamePattern, vPattern).prefix(PREFIX_EXPOSURE).distinct();
 
         JSONArray queryResult;
         if (Config.NAMESPACE != null) {
@@ -447,6 +458,10 @@ public class QueryClient {
             String calcType = queryResult.getJSONObject(i).getString(calculationType.getVarName());
             calcType = calcType.substring(calcType.lastIndexOf('/') + 1);
             calculationMap.get(calculationIri).setName(formatCalculationLabel(calcType));
+            if (queryResult.getJSONObject(i).has(columnNameVar.getVarName())) {
+                calculationMap.get(calculationIri).setColumnName(
+                        queryResult.getJSONObject(i).getString(columnNameVar.getVarName()));
+            }
 
             if (queryResult.getJSONObject(i).has(distanceVar.getVarName())) {
                 double distance = queryResult.getJSONObject(i).getDouble(distanceVar.getVarName());
