@@ -10,6 +10,7 @@ public class CalculationMethod {
     String iri;
     Double distance = null;// buffer distance
     String name; // public facing name
+    private String columnName;
     Map<String, String> datasetFilter;
     private String lowerBound;
     private String upperBound;
@@ -73,7 +74,23 @@ public class CalculationMethod {
     }
 
     public String getName() {
-        return name;
+        return columnName == null || columnName.isBlank() ? name : name + " (" + columnName + ")";
+    }
+
+    public void setColumnName(String columnName) {
+        this.columnName = columnName;
+    }
+
+    // Recognise the source schema without maintaining a list of years or columns.
+    public List<String> getColumnGroups() {
+        if (columnName == null) return List.of();
+        java.util.regex.Matcher match = java.util.regex.Pattern.compile("^(\\d{4})_(h[1-5])_ge$")
+                .matcher(columnName);
+        return match.matches() ? List.of("year=" + match.group(1), "height=" + match.group(2)) : List.of();
+    }
+
+    public String getDisplayName() {
+        return getColumnGroups().isEmpty() ? getName() : name;
     }
 
     public List<String> getDatasetFilters() {
