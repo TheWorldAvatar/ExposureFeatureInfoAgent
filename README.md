@@ -173,6 +173,22 @@ This agent is designed to be deployed on <https://github.com/TheWorldAvatar/hd4-
     [{"iri": "http://dataset", "name": "Heat dataset"}]
     ```
 
+6) /gvi/feature-info-agent/get
+
+    Formats supplied query parameters named `YYYY_h[1-5]_ge` into JSON grouped by year and height, wrapped in `meta`. No database query is performed. Only supplied years and heights are included.
+
+    Example request:
+
+    ```text
+    GET /exposure-feature-info-agent/gvi/feature-info-agent/get?2019_h1_ge=0.104189008335027&2025_h2_ge=0.048223031297365&h1_weight=30993.37
+    ```
+
+    Example response:
+
+    ```json
+    {"meta":{"2019":{"collapse":true,"h1":0.1042},"2025":{"collapse":true,"h2":0.0482}}}
+    ```
+
 ## Build
 
 Populate [docker\credentials](docker\credentials) with `repo_password.txt` and `repo_username.txt`.

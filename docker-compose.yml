@@ -1,4 +1,4 @@
 services:
   exposure-feature-info-agent:
-    image: ghcr.io/theworldavatar/exposure-feature-info-agent:2.3.3
+    image: ghcr.io/theworldavatar/exposure-feature-info-agent:2.4.0
     build: .

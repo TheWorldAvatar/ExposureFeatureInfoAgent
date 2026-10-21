@@ -2,6 +2,11 @@ package cares.cam.ac.uk;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.servlet.ServletException;
 import javax.servlet.annotation.WebServlet;
@@ -20,7 +25,7 @@ import org.apache.logging.log4j.Logger;
 
 @WebServlet(urlPatterns = { ExposureFeatureInfoAgent.STANDARD_ROUTE, ExposureFeatureInfoAgent.TRAJECTORY_ROUTE,
         ExposureFeatureInfoAgent.SQL_ROUTE, ExposureFeatureInfoAgent.TIMELINE_ROUTE,
-        ExposureFeatureInfoAgent.DATASETS_ROUTE })
+        ExposureFeatureInfoAgent.DATASETS_ROUTE, ExposureFeatureInfoAgent.GVI_ROUTE })
 public class ExposureFeatureInfoAgent extends HttpServlet {
     private static final Logger LOGGER = LogManager.getLogger(ExposureFeatureInfoAgent.class);
     static final String STANDARD_ROUTE = "/feature-info-agent/get";
@@ -28,6 +33,8 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
     static final String TRAJECTORY_ROUTE = "/trajectory/feature-info-agent/get";
     static final String TIMELINE_ROUTE = "/timeline";
     static final String DATASETS_ROUTE = "/timeline/getDatasets";
+    static final String GVI_ROUTE = "/gvi/feature-info-agent/get";
+    private static final Pattern GVI_PARAMETER = Pattern.compile("^(\\d{4})_(h[1-5])_ge$");
     QueryClient queryClient;
     private final TimelineAuthentication timelineAuthentication = new TimelineAuthentication();
 
@@ -53,6 +60,13 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
                 status = Response.Status.UNAUTHORIZED.getStatusCode();
                 resp.setHeader("WWW-Authenticate", "Bearer");
                 response.put("error", e.getMessage());
+            } catch (IllegalArgumentException e) {
+                status = Response.Status.BAD_REQUEST.getStatusCode();
+                response.put("error", e.getMessage());
+            }
+        } else if (req.getServletPath().equals(GVI_ROUTE)) {
+            try {
+                response.put("meta", formatGviParameters(req.getParameterMap()));
             } catch (IllegalArgumentException e) {
                 status = Response.Status.BAD_REQUEST.getStatusCode();
                 response.put("error", e.getMessage());
@@ -89,6 +103,31 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
             LOGGER.error(e.getMessage());
             LOGGER.error("Failed to create JSON object for HTTP response");
         }
+    }
+
+    static JSONObject formatGviParameters(Map<String, String[]> parameters) {
+        JSONObject result = new JSONObject();
+        parameters.forEach((name, values) -> {
+            Matcher matcher = GVI_PARAMETER.matcher(name);
+            if (!matcher.matches()) {
+                return;
+            }
+            if (values == null || values.length != 1 || values[0] == null) {
+                throw new IllegalArgumentException("Expected one numeric value for " + name);
+            }
+            BigDecimal value;
+            try {
+                value = new BigDecimal(values[0].trim()).setScale(4, RoundingMode.HALF_UP);
+            } catch (NumberFormatException | ArithmeticException e) {
+                throw new IllegalArgumentException("Invalid numeric value for " + name);
+            }
+            String year = matcher.group(1);
+            if (!result.has(year)) {
+                result.put(year, new JSONObject().put("collapse", true));
+            }
+            result.getJSONObject(year).put(matcher.group(2), value);
+        });
+        return result;
     }
 
     @Override
