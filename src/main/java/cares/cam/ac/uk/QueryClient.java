@@ -682,7 +682,8 @@ public class QueryClient {
                         .replace("[SESSION_IRI]", measures.getString("session"))
                         .replace("[FILTER]", buildTimeFilter(lowerBound, upperBound));
             } else {
-                query = "PREFIX time: <http://www.w3.org/2006/time#> "
+                query = "PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> "
+                        + "PREFIX time: <http://www.w3.org/2006/time#> "
                         + "PREFIX timeseries: <https://www.theworldavatar.com/kg/ontotimeseries/> "
                         + "SELECT DISTINCT ?timestamp ?time_number WHERE { "
                         + "?observation timeseries:observationOf " + Rdf.iri(pointIri).getQueryString() + " . "
