@@ -98,10 +98,13 @@ public class QueryClient {
     static final Prefix PREFIX_TIMESERIES = SparqlBuilder
             .prefix("timeseries", Rdf.iri("https://www.theworldavatar.com/kg/ontotimeseries/"));
 
-    static final Iri IS_DERIVED_FROM = PREFIX_DERIVATION.iri("isDerivedFrom");
+    static final Iri DERIVATION = PREFIX_DERIVATION.iri("Derivation");
+    static final Iri HAS_SUBJECT = PREFIX_EXPOSURE.iri("hasSubject");
+    static final Iri HAS_EXPOSURE_DATASET = PREFIX_EXPOSURE.iri("hasExposureDataset");
     static final Iri HAS_CALCULATION_METHOD = PREFIX_EXPOSURE.iri("hasCalculationMethod");
     static final Iri BELONGS_TO = PREFIX_DERIVATION.iri("belongsTo");
     static final Iri HAS_VALUE = PREFIX_EXPOSURE.iri("hasValue");
+    static final Iri HAS_PERCENTILE = PREFIX_EXPOSURE.iri("hasPercentile");
     static final Iri HAS_DISTANCE = PREFIX_EXPOSURE.iri("hasDistance");
     static final Iri HAS_COLUMN_NAME = PREFIX_EXPOSURE.iri("hasColumnName");
     static final Iri HAS_TIME_SERIES = PREFIX_TIMESERIES.iri("hasTimeSeries");
@@ -171,13 +174,16 @@ public class QueryClient {
         Variable exposureResult = query.var();
         Variable exposureValueVar = query.var();
         Variable unitVar = query.var();
+        Variable percentileVar = query.var();
 
-        GraphPattern gp1 = derivation.has(IS_DERIVED_FROM, subject).andHas(IS_DERIVED_FROM, exposure)
-                .filter(Expressions.notEquals(exposure, Rdf.iri(iri)));
+        GraphPattern gp1 = derivation.isA(DERIVATION).andHas(HAS_SUBJECT, subject)
+                .andHas(HAS_EXPOSURE_DATASET, exposure);
         TriplePattern gp2 = exposureResult.has(BELONGS_TO, derivation).andHas(HAS_VALUE, exposureValueVar)
                 .andHas(HAS_CALCULATION_METHOD, calculation).andHas(HAS_UNIT, unitVar);
 
-        query.where(gp1, gp2).select(exposureValueVar, exposure, calculation, unitVar).prefix(
+        GraphPattern percentilePattern = exposureResult.has(HAS_PERCENTILE, percentileVar).optional();
+
+        query.where(gp1, gp2, percentilePattern).select(exposureValueVar, exposure, calculation, unitVar, percentileVar).prefix(
                 PREFIX_DERIVATION, PREFIX_EXPOSURE).distinct();
 
         JSONArray queryResult = ontopClient.executeQuery(query.getQueryString());
@@ -191,10 +197,12 @@ public class QueryClient {
             String calculationIri = queryResult.getJSONObject(i).getString(calculation.getVarName());
             double value = queryResult.getJSONObject(i).getDouble(exposureValueVar.getVarName());
             String unit = queryResult.getJSONObject(i).getString(unitVar.getVarName());
+            Double percentile = queryResult.getJSONObject(i).isNull(percentileVar.getVarName())
+                    ? null : queryResult.getJSONObject(i).getDouble(percentileVar.getVarName());
 
             calculationMap.computeIfAbsent(calculationIri, k -> new CalculationMethod(k));
             exposureSet.add(exposureIri);
-            resultList.add(new ExposureResult(exposureIri, calculationIri, value, unit));
+            resultList.add(new ExposureResult(exposureIri, calculationIri, value, unit, percentile));
         }
         return formatExposureResults(resultList, calculationMap, exposureSet);
     }

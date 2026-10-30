@@ -16,8 +16,9 @@ WHERE {
     }
     BIND(COALESCE(?exposure_dataset_label, ?exposure_dataset_title) AS ?exposure_dataset_name)
     
-    ?derivation derivation:isDerivedFrom <[SUBJECT]>;
-        derivation:isDerivedFrom ?exposure_dataset.
+    ?derivation a derivation:Derivation ;
+        exposure:hasSubject <[SUBJECT]> ;
+        exposure:hasExposureDataset ?exposure_dataset .
 
     ?result a exposure:ExposureResult ;
         derivation:belongsTo ?derivation;
