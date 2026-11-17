@@ -1,0 +1,42 @@
+{
+    "datasetName": "NDVI with properties",
+    "datasetMetadata": {},
+    "id": "ndvi-with-properties",
+    "naming": {
+        "prefix": "GGPA",
+        "template": "{prefix}_{method}{distance}_i{public_access}f{formal_green}_{year}",
+        "bindings": {
+            "year": {
+                "column": "year",
+                "from": "filter"
+            },
+            "method": {
+                "mapping": {
+                    "https://www.theworldavatar.com/kg/ontoexposure/RasterArea": "ea",
+                    "https://www.theworldavatar.com/kg/ontoexposure/Area": "ea",
+                    "https://www.theworldavatar.com/kg/ontoexposure/AreaWeightedSum": "ew"
+                },
+                "from": "rdfType"
+            },
+            "public_access": {
+                "mapping": {
+                    "true": "1",
+                    "false": "0"
+                },
+                "from": "filter",
+                "column": "public_access"
+            },
+            "formal_green": {
+                "mapping": {
+                    "true": "1",
+                    "false": "0"
+                },
+                "from": "filter",
+                "column": "formal_green"
+            },
+            "distance": {
+                "from": "distance"
+            }
+        }
+    }
+}

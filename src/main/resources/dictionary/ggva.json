@@ -1,0 +1,19 @@
+{
+    "datasetName": "GGVA",
+    "datasetMetadata": {},
+    "id": "ggva",
+    "naming": {
+        "prefix": "GGVA",
+        "template": "{prefix}_{height}_{year}",
+        "bindings": {
+            "height": {
+                "column": "height",
+                "from": "filter"
+            },
+            "year": {
+                "column": "year",
+                "from": "filter"
+            }
+        }
+    }
+}

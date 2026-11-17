@@ -1,4 +1,6 @@
-# First stage: download the Java dependencies (allows them to be cached if unchanged)
+# syntax=docker/dockerfile:1
+
+# First stage: prepare production dependencies and build plugins before copying source
 #==================================================================================================
 FROM maven:3.9.6-eclipse-temurin-17 AS retriever
 
@@ -12,39 +14,40 @@ WORKDIR /root/.m2
 RUN sed -i "s|MASTER_PASSWORD|$(mvn --encrypt-master-password master_password)|" settings-security.xml
 RUN sed -i "s|REPO_USERNAME|$(cat ../credentials/repo_username.txt)|;s|REPO_PASSWORD|$(cat ../credentials/repo_password.txt|xargs mvn --encrypt-password)|" settings.xml
 
-# Copy in Java source and build jar
+# Source changes do not invalidate this dependency preparation layer.
 WORKDIR /root/code
 
 COPY pom.xml ./pom.xml
-RUN --mount=type=cache,id=fia-m2-cache,target=/root/.m2/repository,sharing=locked mvn dependency:resolve
+RUN --mount=type=cache,id=fia-m2-cache,target=/root/.m2/repository,sharing=locked \
+    mvn -B dependency:go-offline -P prod-profile -DskipTests
 
 #==================================================================================================
 
 # Second stage: build war file
 #==================================================================================================
 
-FROM maven:3.9.6-eclipse-temurin-17 AS builder
-
-COPY --from=retriever /root/.m2 /root/.m2
+FROM retriever AS builder
 
 # Copy in Java source and build war
 WORKDIR /root/code
 
-COPY pom.xml ./
 COPY src ./src/
 COPY WEB-INF ./WEB-INF/
 
-RUN --mount=type=cache,id=fia-m2-cache,target=/root/.m2/repository,sharing=locked mvn package -DskipTests -U -P prod-profile
+# Reuse the same Maven cache. Allow missing artifacts to be fetched, but do not
+# force snapshot updates on every source edit. Cache mounts are builder-local.
+RUN --mount=type=cache,id=fia-m2-cache,target=/root/.m2/repository,sharing=locked \
+    mvn -B package -DskipTests -P prod-profile
 
 #==================================================================================================
 
-# Third stage: copy the downloaded dependency into a new image and build into an app
+# Third stage: copy the built WAR into the runtime image
 #==================================================================================================
 FROM tomcat:9 AS agent
 
 WORKDIR /app
 
-# Copy the compiled jar from the builder
+# Copy the compiled WAR from the builder
 COPY --from=builder /root/code/output/* $CATALINA_HOME/webapps/
 COPY ./docker/entrypoint.sh entrypoint.sh
 

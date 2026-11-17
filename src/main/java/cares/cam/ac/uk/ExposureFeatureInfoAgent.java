@@ -25,7 +25,7 @@ import org.apache.logging.log4j.Logger;
 
 @WebServlet(urlPatterns = { ExposureFeatureInfoAgent.STANDARD_ROUTE, ExposureFeatureInfoAgent.TRAJECTORY_ROUTE,
         ExposureFeatureInfoAgent.SQL_ROUTE, ExposureFeatureInfoAgent.TIMELINE_ROUTE,
-        ExposureFeatureInfoAgent.DATASETS_ROUTE, ExposureFeatureInfoAgent.GVI_ROUTE })
+        ExposureFeatureInfoAgent.DATASETS_ROUTE, ExposureFeatureInfoAgent.GVI_ROUTE, ExposureFeatureInfoAgent.DICTIONARY_ROUTE })
 public class ExposureFeatureInfoAgent extends HttpServlet {
     private static final Logger LOGGER = LogManager.getLogger(ExposureFeatureInfoAgent.class);
     static final String STANDARD_ROUTE = "/feature-info-agent/get";
@@ -34,12 +34,40 @@ public class ExposureFeatureInfoAgent extends HttpServlet {
     static final String TIMELINE_ROUTE = "/timeline";
     static final String DATASETS_ROUTE = "/timeline/getDatasets";
     static final String GVI_ROUTE = "/gvi/feature-info-agent/get";
+    static final String DICTIONARY_ROUTE = "/dictionary/metadata";
     private static final Pattern GVI_PARAMETER = Pattern.compile("^(\\d{4})_(h[1-5])_ge$");
     QueryClient queryClient;
     private final TimelineAuthentication timelineAuthentication = new TimelineAuthentication();
 
     @Override
+    public void doPost(HttpServletRequest req, HttpServletResponse resp) throws IOException {
+        resp.setContentType("application/json");
+        resp.setCharacterEncoding("UTF-8");
+        if (!DICTIONARY_ROUTE.equals(req.getServletPath())) {
+            resp.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+            resp.getWriter().write(new JSONObject().put("error", "POST is only supported for " + DICTIONARY_ROUTE).toString());
+            return;
+        }
+        try {
+            JSONObject request = new JSONObject(req.getReader().lines().collect(java.util.stream.Collectors.joining("\n")));
+            resp.getWriter().write(queryClient.initialiseDictionary(request).toString());
+        } catch (IllegalArgumentException | JSONException e) {
+            resp.setStatus(HttpServletResponse.SC_BAD_REQUEST);
+            resp.getWriter().write(new JSONObject().put("error", e.getMessage()).toString());
+        } catch (RuntimeException e) {
+            LOGGER.error("Dictionary metadata operation failed", e);
+            resp.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
+            resp.getWriter().write(new JSONObject().put("error", "Dictionary metadata operation failed; check server logs").toString());
+        }
+    }
+
+    @Override
     public void doGet(HttpServletRequest req, HttpServletResponse resp) {
+        if (DICTIONARY_ROUTE.equals(req.getServletPath())) {
+            resp.setStatus(HttpServletResponse.SC_METHOD_NOT_ALLOWED);
+            resp.setHeader("Allow", "POST");
+            return;
+        }
         String iri = req.getParameter("iri");
         LOGGER.info("Received request for iri = <{}>", iri);
 

@@ -1,0 +1,33 @@
+{
+    "datasetName": "Greenspace 2016 (URA)",
+    "datasetMetadata": {
+        "year": "2016",
+        "source": "u"
+    },
+    "id": "greenspace-2016-ura",
+    "naming": {
+        "prefix": "GGPA",
+        "template": "{prefix}_{method}{distance}_{source}_{year}",
+        "bindings": {
+            "year": {
+                "key": "year",
+                "from": "datasetMetadata"
+            },
+            "method": {
+                "mapping": {
+                    "https://www.theworldavatar.com/kg/ontoexposure/RasterArea": "ea",
+                    "https://www.theworldavatar.com/kg/ontoexposure/Area": "ea",
+                    "https://www.theworldavatar.com/kg/ontoexposure/AreaWeightedSum": "ew"
+                },
+                "from": "rdfType"
+            },
+            "source": {
+                "key": "source",
+                "from": "datasetMetadata"
+            },
+            "distance": {
+                "from": "distance"
+            }
+        }
+    }
+}

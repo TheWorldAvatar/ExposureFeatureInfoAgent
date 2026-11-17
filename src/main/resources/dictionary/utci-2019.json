@@ -1,0 +1,29 @@
+{
+    "datasetName": "UTCI (2019)",
+    "datasetMetadata": {
+        "year": "2019"
+    },
+    "id": "utci-2019",
+    "naming": {
+        "prefix": "GCCI",
+        "template": "{prefix}_{stat}_e{distance}_{year}_M{month}",
+        "bindings": {
+            "year": {
+                "key": "year",
+                "from": "datasetMetadata"
+            },
+            "stat": {
+                "column": "stat",
+                "from": "filter"
+            },
+            "distance": {
+                "from": "distance"
+            },
+            "month": {
+                "from": "filter",
+                "width": 2,
+                "column": "month"
+            }
+        }
+    }
+}
