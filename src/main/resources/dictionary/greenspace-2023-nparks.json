@@ -1,0 +1,34 @@
+{
+  "excludedCalculationTypes": ["https://www.theworldavatar.com/kg/ontoexposure/Walking", "https://www.theworldavatar.com/kg/ontoexposure/Cycling"],
+    "datasetName": "Greenspace 2023 (NParks)",
+    "datasetMetadata": {
+        "year": "2023",
+        "source": "n"
+    },
+    "id": "greenspace-2023-nparks",
+    "naming": {
+        "prefix": "GGPA",
+        "template": "{prefix}_{method}{distance}_{source}_{year}",
+        "bindings": {
+            "year": {
+                "key": "year",
+                "from": "datasetMetadata"
+            },
+            "method": {
+                "mapping": {
+                    "https://www.theworldavatar.com/kg/ontoexposure/RasterArea": "ea",
+                    "https://www.theworldavatar.com/kg/ontoexposure/Area": "ea",
+                    "https://www.theworldavatar.com/kg/ontoexposure/AreaWeightedSum": "ew"
+                },
+                "from": "rdfType"
+            },
+            "source": {
+                "key": "source",
+                "from": "datasetMetadata"
+            },
+            "distance": {
+                "from": "distance"
+            }
+        }
+    }
+}

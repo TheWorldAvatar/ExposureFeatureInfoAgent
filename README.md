@@ -222,3 +222,27 @@ To attach using VS code, the following config can be applied in `launch.json`:
 ```
 
 Note that some debugging features may not work if this repo folder is not named `ExposureFeatureInfoAgent` (e.g. being able to watch parameters).
+
+## Demonstration dictionary metadata
+
+This demo copies JSON configurations from
+`src/main/resources/dictionary/` into the dataset's metadata in the `kb` namespace.
+The agent reads it back to add variable codes to buffer labels, such as
+`400 m (GGPA_ew400_2016)`. Without the metadata, labels stay unchanged.
+
+Preview with the route:
+
+```http
+POST /dictionary/metadata
+Content-Type: application/json
+
+{"datasetName":"NDVI","dryRun":true}
+```
+
+Set `dryRun` to `false` to write.
+
+If the dataset name differs, select the resource explicitly:
+
+```json
+{"configuration":"ndvi","datasetIri":"https://example.org/actual-dataset","dryRun":true}
+```

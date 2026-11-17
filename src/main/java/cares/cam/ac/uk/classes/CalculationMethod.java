@@ -10,6 +10,19 @@ public class CalculationMethod {
     String iri;
     Double distance = null;// buffer distance
     String name; // public facing name
+    private final java.util.Set<String> rdfTypes = new java.util.HashSet<>();
+
+    public void addRdfType(String type) { rdfTypes.add(type); }
+    public java.util.Set<String> getRdfTypes() { return java.util.Set.copyOf(rdfTypes); }
+    public Double getDistance() { return distance; }
+    public Map<String, String> getFilterValues() {
+        Map<String, String> values = new HashMap<>(datasetFilter);
+        for (String group : getColumnGroups()) {
+            String[] parts = group.split("=", 2);
+            values.putIfAbsent(parts[0], parts[1]);
+        }
+        return values;
+    }
     private String columnName;
     Map<String, String> datasetFilter;
     private String lowerBound;

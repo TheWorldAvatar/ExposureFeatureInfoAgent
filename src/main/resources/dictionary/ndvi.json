@@ -1,0 +1,26 @@
+{
+    "datasetName": "NDVI",
+    "datasetMetadata": {},
+    "id": "ndvi",
+    "naming": {
+        "prefix": "GGPA",
+        "template": "{prefix}_{method}{distance}_{year}",
+        "bindings": {
+            "year": {
+                "column": "year",
+                "from": "filter"
+            },
+            "method": {
+                "mapping": {
+                    "https://www.theworldavatar.com/kg/ontoexposure/RasterArea": "ea",
+                    "https://www.theworldavatar.com/kg/ontoexposure/Area": "ea",
+                    "https://www.theworldavatar.com/kg/ontoexposure/AreaWeightedSum": "ew"
+                },
+                "from": "rdfType"
+            },
+            "distance": {
+                "from": "distance"
+            }
+        }
+    }
+}

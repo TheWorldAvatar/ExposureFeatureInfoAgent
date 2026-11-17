@@ -88,6 +88,66 @@ public class QueryClient {
     }
 
     RemoteStoreClient federateClient;
+    private RemoteStoreClient dictionaryStore;
+
+    private RemoteStoreClient dictionaryStore() {
+        if (dictionaryStore == null) dictionaryStore = BlazegraphClient.getInstance().getRemoteStoreClient("kb");
+        return dictionaryStore;
+    }
+
+    JSONObject initialiseDictionary(JSONObject request) {
+        String name = request.optString("datasetName", "");
+        JSONObject config = DictionaryMetadata.select(request.optString("configuration", name));
+        String selector = request.has("datasetIri")
+                ? "VALUES ?dataset { " + DictionaryMetadata.iri(request.getString("datasetIri")) + " }"
+                : "?dataset ?nameProperty ?name . VALUES ?nameProperty { <http://www.w3.org/2000/01/rdf-schema#label> <http://purl.org/dc/terms/title> } FILTER(STR(?name) = "
+                    + DictionaryMetadata.literal(name.isEmpty() ? config.getString("datasetName") : name) + ")";
+        JSONArray datasets = dictionaryStore().executeQuery("SELECT DISTINCT ?dataset WHERE { ?dataset a <http://www.w3.org/ns/dcat#Dataset> . " + selector + " }");
+        if (datasets.length() != 1) throw new IllegalArgumentException("Expected exactly one dataset in kb; candidates: " + datasets);
+        String dataset = datasets.getJSONObject(0).getString("dataset");
+        JSONObject existing = DictionaryMetadata.read(dictionaryStore(), dataset);
+        if (existing != null && !existing.similar(config)) throw new IllegalArgumentException("Conflicting naming metadata already exists for " + dataset);
+        JSONArray rows = ontopClient.executeQuery("SELECT DISTINCT ?calculation WHERE { ?derivation <https://www.theworldavatar.com/kg/ontoexposure/hasExposureDataset> "
+                + DictionaryMetadata.iri(dataset) + " . ?result <https://www.theworldavatar.com/kg/ontoderivation/belongsTo> ?derivation ; <https://www.theworldavatar.com/kg/ontoexposure/hasCalculationMethod> ?calculation . }");
+        Map<String, CalculationMethod> methods = new HashMap<>();
+        for (Object item : rows) { String id = ((JSONObject) item).getString("calculation"); methods.put(id, new CalculationMethod(id)); }
+        if (!methods.isEmpty()) setCalculationProperties(methods);
+        JSONArray examples = new JSONArray();
+        JSONArray missing = new JSONArray();
+        JSONArray skipped = new JSONArray();
+        if (methods.isEmpty()) missing.put("No linked calculations found");
+        methods.entrySet().stream().sorted(Map.Entry.comparingByKey()).forEach(entry -> {
+            if (DictionaryMetadata.excluded(config, entry.getValue())) {
+                skipped.put(new JSONObject().put("calculationIri", entry.getKey())
+                        .put("rdfTypes", entry.getValue().getRdfTypes()).put("reason", "Calculation type explicitly excluded"));
+                return;
+            }
+            try { examples.put(new JSONObject().put("calculationIri", entry.getKey()).put("variableCode", DictionaryMetadata.code(config, entry.getValue()))); }
+            catch (IllegalArgumentException | org.json.JSONException e) { missing.put(new JSONObject().put("calculationIri", entry.getKey()).put("error", e.getMessage())); }
+        });
+        String triple = DictionaryMetadata.iri(dataset) + " <" + DictionaryMetadata.PROPERTY + "> " + DictionaryMetadata.literal(config.toString()) + " .";
+        boolean dryRun = request.optBoolean("dryRun", true);
+        if (!dryRun && !missing.isEmpty()) throw new IllegalArgumentException("Cannot write: incomplete metadata: " + missing);
+        if (!dryRun) {
+            // A conditional insert makes repeated identical writes harmless and prevents replacement.
+            dictionaryStore().executeUpdate("INSERT { " + triple + " } WHERE { FILTER NOT EXISTS { " + DictionaryMetadata.iri(dataset) + " <" + DictionaryMetadata.PROPERTY + "> ?existing } }");
+            JSONObject stored = DictionaryMetadata.read(dictionaryStore(), dataset);
+            if (stored == null || !stored.similar(config)) throw new IllegalArgumentException("Naming configuration conflict during write");
+        }
+        return new JSONObject().put("datasetIri", dataset).put("dryRun", dryRun)
+                .put("status", missing.isEmpty() ? (dryRun ? "ready" : "stored") : "incomplete")
+                .put("configuration", config).put("examples", examples).put("missingMetadata", missing)
+                .put("skippedCalculations", skipped).put("proposedTriples", triple);
+    }
+
+    private Map<String, JSONObject> dictionaryProfiles(Set<String> datasets) {
+        Map<String, JSONObject> profiles = new HashMap<>();
+        for (String dataset : datasets) {
+            JSONObject profile = DictionaryMetadata.read(dictionaryStore(), dataset);
+            if (profile != null) profiles.put(dataset, profile);
+        }
+        return profiles;
+    }
     RemoteStoreClient ontopClient;
     RemoteStoreClient blazegraphClient;
 
@@ -242,11 +302,17 @@ public class QueryClient {
         setCalculationProperties(calculationMap);
         Map<String, String> exposureMap = getExposureName(exposureSet);
 
-        return formatExposureResults(resultList, calculationMap, exposureMap, false);
+        return formatExposureResults(resultList, calculationMap, exposureMap, false, dictionaryProfiles(exposureSet));
     }
 
     static JSONObject formatExposureResults(List<ExposureResult> resultList,
             Map<String, CalculationMethod> calculationMap, Map<String, String> exposureMap, boolean trajectory) {
+        return formatExposureResults(resultList, calculationMap, exposureMap, trajectory, Map.of());
+    }
+
+    static JSONObject formatExposureResults(List<ExposureResult> resultList,
+            Map<String, CalculationMethod> calculationMap, Map<String, String> exposureMap, boolean trajectory,
+            Map<String, JSONObject> profiles) {
         JSONObject metadata = new JSONObject();
 
         // Calculation IRIs can differ across filters and distances; group by the
@@ -331,6 +397,11 @@ public class QueryClient {
             currentLevel = currentLevel.getJSONObject(calculationLabel);
 
             String formattedDistance = calcMethod.getFormattedDistance();
+            if (formattedDistance != null && profiles.containsKey(result.getExposureIri())
+                    && !DictionaryMetadata.excluded(profiles.get(result.getExposureIri()), calcMethod)) {
+                try { formattedDistance += " (" + DictionaryMetadata.code(profiles.get(result.getExposureIri()), calcMethod) + ")"; }
+                catch (IllegalArgumentException | org.json.JSONException e) { LOGGER.warn("Cannot generate dictionary code for {}: {}", result.getCalculationIri(), e.getMessage()); }
+            }
             if (formattedDistance != null) {
                 if (trajectory) putTrajectoryValue(currentLevel, formattedDistance, calcMethod.getBoundsLabel(), formattedValue); else currentLevel.put(formattedDistance, formattedValue);
 
@@ -464,6 +535,7 @@ public class QueryClient {
             String calculationIri = queryResult.getJSONObject(i).getString(calculation.getVarName());
             queriedCalc.add(calculationIri);
             String calcType = queryResult.getJSONObject(i).getString(calculationType.getVarName());
+            calculationMap.get(calculationIri).addRdfType(calcType);
             calcType = calcType.substring(calcType.lastIndexOf('/') + 1);
             calculationMap.get(calculationIri).setName(formatCalculationLabel(calcType));
             if (queryResult.getJSONObject(i).has(columnNameVar.getVarName())) {
@@ -629,7 +701,8 @@ public class QueryClient {
                     unit.isBlank() ? "[-]" : unit));
         }
         setCalculationProperties(calculations);
-        JSONObject metadata = formatExposureResults(results, calculations, datasets, true);
+        JSONObject metadata = formatExposureResults(results, calculations, datasets, true,
+                dictionaryProfiles(results.stream().map(ExposureResult::getExposureIri).collect(Collectors.toSet())));
         return metadata;
     }
 
